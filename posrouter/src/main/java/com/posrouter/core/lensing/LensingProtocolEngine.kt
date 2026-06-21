@@ -38,6 +38,7 @@ internal object LensingProtocolEngine {
     fun start(config: POSRouterConfig) {
         terminalId = config.terminalId
         state = LensingState.DISCOVERING
+        TerminalEventDispatcher.dispatchNatsState(state)
 
         scope.launch {
             try {
@@ -49,6 +50,7 @@ internal object LensingProtocolEngine {
                 connectNats(credentials.natsUrl, credentials.natsToken, config.terminalId)
             } catch (e: Exception) {
                 state = LensingState.FAILED
+                TerminalEventDispatcher.dispatchNatsState(state)
                 Log.e(TAG, "Gateway discovery failed", e)
             }
         }
@@ -56,6 +58,7 @@ internal object LensingProtocolEngine {
 
     private fun connectNats(url: String, token: String, tid: String) {
         state = LensingState.CONNECTING
+        TerminalEventDispatcher.dispatchNatsState(state)
         try {
             val options = Options.builder()
                 .server(url)
@@ -64,15 +67,18 @@ internal object LensingProtocolEngine {
                     when (type) {
                         io.nats.client.ConnectionListener.Events.DISCONNECTED -> {
                             state = LensingState.RECONNECTING
+                            TerminalEventDispatcher.dispatchNatsState(state)
                             scheduleReconnect(url, token, tid)
                         }
                         io.nats.client.ConnectionListener.Events.RECONNECTED -> {
                             state = LensingState.CONNECTED
+                            TerminalEventDispatcher.dispatchNatsState(state)
                             reconnectAttempt = 0
                             flushFallbackQueue()
                         }
                         io.nats.client.ConnectionListener.Events.CONNECTED -> {
                             state = LensingState.CONNECTED
+                            TerminalEventDispatcher.dispatchNatsState(state)
                         }
                         else -> Unit
                     }
@@ -82,11 +88,13 @@ internal object LensingProtocolEngine {
             natsConnection = Nats.connect(options)
             dispatcher = natsConnection?.createDispatcher { }
             state = LensingState.CONNECTED
+            TerminalEventDispatcher.dispatchNatsState(state)
             reconnectAttempt = 0
             setupTerminalSubscriptions(tid)
             flushFallbackQueue()
         } catch (e: Exception) {
             state = LensingState.RECONNECTING
+            TerminalEventDispatcher.dispatchNatsState(state)
             scheduleReconnect(url, token, tid)
         }
     }
@@ -208,10 +216,22 @@ internal object LensingProtocolEngine {
 
             PaymentSessionRegistry.store(wire)
 
+            TerminalEventDispatcher.dispatchRemotePaymentReceived(
+                orderId = wire.orderId,
+                amountCents = wire.amount,
+                currency = wire.currency,
+                remark = wire.remark,
+                method = wire.method
+            )
+
             val launch = LocalAcquirerLauncher.launchPay(context, config, routing, wire)
             if (!launch.success) {
                 PaymentSessionRegistry.remove(wire.terminalId, wire.orderId)
                 PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId)
+                TerminalEventDispatcher.dispatchRemotePaymentLaunchFailed(
+                    wire.orderId,
+                    "Could not launch local acquirer"
+                )
                 Log.w(TAG, "Terminal-side local pay launch failed for order ${wire.orderId}")
             } else {
                 PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId)

@@ -8,6 +8,7 @@ import com.posrouter.core.lensing.LensingState
 import com.posrouter.core.lensing.PaymentClaimRegistry
 import com.posrouter.core.lensing.PaymentSessionRegistry
 import com.posrouter.core.lensing.PendingPaymentRegistry
+import com.posrouter.core.lensing.TerminalEventDispatcher
 import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalLaunchMethod
@@ -109,8 +110,17 @@ object POSRouter {
         PaymentClaimRegistry.releaseClaim(result.terminalId, orderId)
         PendingPaymentRegistry.deliver(result)
         LensingProtocolEngine.publishPaymentResult(result)
+        TerminalEventDispatcher.dispatchPaymentCompleted(result)
         return result
     }
+
+    fun setTerminalListener(listener: POSRouterTerminalListener?) {
+        TerminalEventDispatcher.listener = listener
+        listener?.onNatsStateChanged(LensingProtocolEngine.currentState().toNatsConnectionState())
+    }
+
+    fun currentNatsState(): NatsConnectionState =
+        LensingProtocolEngine.currentState().toNatsConnectionState()
 
     private fun connectResult(config: POSRouterConfig, method: LocalLaunchMethod) = PaymentResult(
         terminalId = config.terminalId,
