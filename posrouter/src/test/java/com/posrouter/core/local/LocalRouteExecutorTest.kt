@@ -21,10 +21,18 @@ class LocalRouteExecutorTest {
                 orderId = "GM20260602001",
                 remark = "Table 5"
             ),
-            com.posrouter.LocalParamSeparator.PIPE
+            POSRouterConfig(
+                participantCode = "GPOS",
+                participantKey = "key",
+                terminalId = "TID001",
+                acquirerCode = "SUPY",
+                merchantId = "abc123",
+                callbackUrl = "gomenu://pay_result",
+                localParamSeparator = com.posrouter.LocalParamSeparator.PIPE
+            )
         )
         assertEquals(
-            "amount=666.66|orderid=GM20260602001|remark=Table%205",
+            "amount=666.66|currency=NZD|orderid=GM20260602001|remark=Table%205|callback_url=gomenu://pay_result",
             data
         )
     }
@@ -54,6 +62,37 @@ class LocalRouteExecutorTest {
     }
 
     @Test
+    fun buildPayDeepLinkUsesAmpersandQueryParamsLikeEzypos() {
+        val uriString = LocalDeepLinkUriBuilder.buildPayUriString(
+            WirePaymentRequest(
+                terminalId = "TID001",
+                amount = 50,
+                currency = "NZD",
+                targetPackageName = "ezypay.com.globe.cardpos",
+                targetScheme = "ezypos://",
+                acquirerCode = "SUPY",
+                orderId = "GM001",
+                remark = "Mini Scoop",
+                method = "emv_card"
+            ),
+            com.posrouter.LocalParamSeparator.AMPERSAND,
+            POSRouterConfig(
+                participantCode = "GPOS",
+                participantKey = "key",
+                terminalId = "TID001",
+                acquirerCode = "SUPY",
+                merchantId = "1FRD9Z",
+                callbackUrl = "gomenu://pay_result",
+                localParamSeparator = com.posrouter.LocalParamSeparator.AMPERSAND
+            )
+        )
+        assertEquals(
+            "ezypos://pay?amount=0.50&currency=NZD&orderid=GM001&remark=Mini%20Scoop&method=emv_card&callback_url=gomenu://pay_result",
+            uriString
+        )
+    }
+
+    @Test
     fun buildPayDeepLinkUsesPipeSeparator() {
         val uriString = LocalDeepLinkUriBuilder.buildPayUriString(
             WirePaymentRequest(
@@ -73,7 +112,6 @@ class LocalRouteExecutorTest {
             "ezypos://pay?amount=666.66|currency=NZD|orderid=GM20260602001|remark=Table%205|method=emv_card",
             uriString
         )
-        assertTrue(!uriString.contains("&"))
     }
 
     @Test

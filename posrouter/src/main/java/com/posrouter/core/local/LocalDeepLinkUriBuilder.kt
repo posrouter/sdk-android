@@ -8,15 +8,16 @@ import com.posrouter.core.registry.AcquirerRegistry
 
 internal object LocalDeepLinkUriBuilder {
 
-    fun buildPayUri(request: WirePaymentRequest, separator: LocalParamSeparator): Uri =
-        Uri.parse(buildPayUriString(request, separator))
+    fun buildPayUri(request: WirePaymentRequest, config: POSRouterConfig): Uri =
+        Uri.parse(buildPayUriString(request, config.localParamSeparator, config))
 
     fun buildConnectUri(config: POSRouterConfig): Uri =
         Uri.parse(buildConnectUriString(config))
 
     internal fun buildPayUriString(
         request: WirePaymentRequest,
-        separator: LocalParamSeparator = LocalParamSeparator.PIPE
+        separator: LocalParamSeparator = LocalParamSeparator.PIPE,
+        config: POSRouterConfig? = null
     ): String {
         val scheme = parseScheme(request.targetScheme)
         val pairs = mutableListOf(
@@ -26,6 +27,7 @@ internal object LocalDeepLinkUriBuilder {
         )
         request.remark?.let { pairs.add(LensLocalEncoder.pair("remark", it, separator)) }
         request.method?.let { pairs.add(LensLocalEncoder.pair("method", it, separator)) }
+        config?.callbackUrl?.let { pairs.add(LensLocalEncoder.pair("callback_url", it, separator)) }
         return "$scheme://pay?${LensLocalEncoder.joinPairs(pairs, separator)}"
     }
 

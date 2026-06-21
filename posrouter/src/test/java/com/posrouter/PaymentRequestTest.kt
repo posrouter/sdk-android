@@ -40,6 +40,22 @@ class PaymentRequestTest {
     }
 
     @Test
+    fun wirePaymentRequestJsonRoundTripsMethodAndRemark() {
+        val wire = PaymentRequest(
+            terminalId = "TID001",
+            amount = 50,
+            orderId = "ORD001",
+            remark = "Mini Scoop",
+            method = "emv_card"
+        ).toWire(config, routing)
+
+        val parsed = WirePaymentRequest.fromJson(wire.toJsonString())
+        assertEquals("emv_card", parsed?.method)
+        assertEquals("Mini Scoop", parsed?.remark)
+        assertEquals(50L, parsed?.amount)
+    }
+
+    @Test
     fun toJsonStringContainsLensingFields() {
         val json = PaymentRequest(
             terminalId = "TID001",
@@ -53,6 +69,7 @@ class PaymentRequestTest {
         assertTrue(json.contains("\"targetPackageName\":\"ezypay.com.globe.cardpos\""))
         assertTrue(json.contains("\"targetScheme\":\"ezypos://\""))
         assertTrue(json.contains("\"orderId\":\"ORD001\""))
+        assertTrue(!json.contains("\"method\""))
     }
 
     @Test

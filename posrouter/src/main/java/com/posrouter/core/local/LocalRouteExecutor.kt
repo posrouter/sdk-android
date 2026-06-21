@@ -25,7 +25,7 @@ internal object LocalRouteExecutor {
     ): Boolean = launchExplicitIntent(
         context,
         routing.packageName,
-        buildPayLensData(request, config.localParamSeparator)
+        buildPayLensData(request, config)
     )
 
     fun launchConnectViaDeepLink(
@@ -41,7 +41,7 @@ internal object LocalRouteExecutor {
         request: WirePaymentRequest
     ): Boolean = launchDeepLink(
         context,
-        LocalDeepLinkUriBuilder.buildPayUri(request, config.localParamSeparator),
+        LocalDeepLinkUriBuilder.buildPayUri(request, config),
         routing.packageName
     )
 
@@ -57,14 +57,17 @@ internal object LocalRouteExecutor {
 
     internal fun buildPayLensData(
         request: WirePaymentRequest,
-        separator: com.posrouter.LocalParamSeparator
+        config: POSRouterConfig
     ): String {
+        val separator = config.localParamSeparator
         val parts = mutableListOf(
             LensLocalEncoder.pair("amount", formatAmountDecimal(request.amount), separator),
+            LensLocalEncoder.pair("currency", request.currency, separator),
             LensLocalEncoder.pair("orderid", request.orderId, separator)
         )
         request.remark?.let { parts.add(LensLocalEncoder.pair("remark", it, separator)) }
         request.method?.let { parts.add(LensLocalEncoder.pair("method", it, separator)) }
+        config.callbackUrl?.let { parts.add(LensLocalEncoder.pair("callback_url", it, separator)) }
         return LensLocalEncoder.joinPairs(parts, separator)
     }
 

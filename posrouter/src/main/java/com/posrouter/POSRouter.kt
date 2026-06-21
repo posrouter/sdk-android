@@ -62,10 +62,9 @@ object POSRouter {
                 return
             }
 
-            LensingProtocolEngine.publishClaimed(request.terminalId, request.orderId)
-
             val launch = LocalAcquirerLauncher.launchPay(activity, config, routing, wire)
             if (launch.success) {
+                LensingProtocolEngine.publishClaimed(request.terminalId, request.orderId)
                 PaymentClaimRegistry.releaseClaim(request.terminalId, request.orderId)
                 callback.onResult(
                     PaymentResult(

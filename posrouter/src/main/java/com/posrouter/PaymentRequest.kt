@@ -51,10 +51,26 @@ internal data class WirePaymentRequest(
     val metadata: Map<String, String> = emptyMap()
 ) {
     fun toJsonString(): String {
-        val metadataJson = metadata.entries.joinToString(",") { (k, v) ->
-            "\"$k\":\"${escapeJson(v)}\""
+        val fields = mutableListOf(
+            """"terminalId":"${escapeJson(terminalId)}"""",
+            """"amount":$amount""",
+            """"currency":"${escapeJson(currency)}"""",
+            """"targetPackageName":"${escapeJson(targetPackageName)}"""",
+            """"targetScheme":"${escapeJson(targetScheme)}"""",
+            """"orderId":"${escapeJson(orderId)}"""",
+            """"acquirerCode":"${escapeJson(acquirerCode)}""""
+        )
+        remark?.let { fields.add(""""remark":"${escapeJson(it)}"""") }
+        method?.let { fields.add(""""method":"${escapeJson(it)}"""") }
+        if (metadata.isNotEmpty()) {
+            val metadataJson = metadata.entries.joinToString(",") { (k, v) ->
+                """"${escapeJson(k)}":"${escapeJson(v)}""""
+            }
+            fields.add(""""metadata":{$metadataJson}""")
+        } else {
+            fields.add(""""metadata":{}""")
         }
-        return """{"terminalId":"$terminalId","amount":$amount,"currency":"$currency","targetPackageName":"$targetPackageName","targetScheme":"$targetScheme","orderId":"$orderId","metadata":{$metadataJson}}"""
+        return "{${fields.joinToString(",")}}"
     }
 
     private fun escapeJson(value: String): String =
@@ -87,7 +103,9 @@ internal data class WirePaymentRequest(
                 targetPackageName = targetPackageName,
                 targetScheme = targetScheme,
                 acquirerCode = extract("acquirerCode") ?: "",
-                orderId = orderId
+                orderId = orderId,
+                remark = extract("remark"),
+                method = extract("method")
             )
         }
     }
