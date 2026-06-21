@@ -14,8 +14,25 @@ data class PaymentResult(
     val amount: Long,
     val currency: String,
     val message: String?,
+    val orderId: String? = null,
     val localRouteMethod: LocalRouteMethod? = null
 ) {
+    fun toJsonString(): String {
+        val fields = mutableListOf(
+            """"terminalId":"${escapeJson(terminalId)}"""",
+            """"status":"${status.name.lowercase()}"""",
+            """"amount":$amount""",
+            """"currency":"${escapeJson(currency)}""""
+        )
+        orderId?.let { fields.add(""""orderId":"${escapeJson(it)}"""") }
+        transactionId?.let { fields.add(""""transactionId":"${escapeJson(it)}"""") }
+        message?.let { fields.add(""""message":"${escapeJson(it)}"""") }
+        return "{${fields.joinToString(",")}}"
+    }
+
+    private fun escapeJson(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"")
+
     companion object {
         fun fromJson(json: String): PaymentResult {
             fun extract(key: String): String? {
@@ -41,7 +58,8 @@ data class PaymentResult(
                 transactionId = extract("transactionId"),
                 amount = extractLong("amount"),
                 currency = extract("currency") ?: "",
-                message = extract("message")
+                message = extract("message"),
+                orderId = extract("orderId") ?: extract("orderid")
             )
         }
     }

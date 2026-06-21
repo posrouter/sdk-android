@@ -110,7 +110,6 @@ internal object LensingProtocolEngine {
 
     fun dispatchTransaction(request: WirePaymentRequest, callback: POSRouterCallback) {
         val targetSubject = LensingSubjects.paySubject(request.terminalId)
-        val resultSubject = LensingSubjects.resultSubject(request.terminalId)
         val payloadBytes = request.toJsonString().toByteArray(Charsets.UTF_8)
 
         val connection = natsConnection
@@ -122,14 +121,24 @@ internal object LensingProtocolEngine {
             return
         }
 
-        subscribeForResult(connection, resultSubject, callback)
+        PaymentSessionRegistry.store(request)
+        PendingPaymentRegistry.register(request.orderId, callback)
 
         try {
             connection.publish(targetSubject, payloadBytes)
+            Log.i(TAG, "Pay dispatched on NATS for order ${request.orderId}")
         } catch (e: Exception) {
+            PaymentSessionRegistry.remove(request.terminalId, request.orderId)
+            PendingPaymentRegistry.cancel(request.orderId)
             fallbackQueue.add(QueuedMessage(targetSubject, payloadBytes, request, callback))
             callback.onError(POSRouterError("PUBLISH_FAILED", e.message ?: "Failed to publish"))
         }
+    }
+
+    fun publishPaymentResult(result: PaymentResult) {
+        val tid = result.terminalId.ifBlank { terminalId } ?: return
+        publishToSubject(LensingSubjects.resultSubject(tid), result.toJsonString())
+        Log.i(TAG, "Payment result published for order ${result.orderId} status=${result.status}")
     }
 
     private fun setupTerminalSubscriptions(tid: String) {
@@ -145,6 +154,23 @@ internal object LensingProtocolEngine {
 
         subDispatcher.subscribe(LensingSubjects.paySubject(tid)) { msg ->
             handleIncomingPay(String(msg.data, Charsets.UTF_8))
+        }
+
+        subDispatcher.subscribe(LensingSubjects.resultSubject(tid)) { msg ->
+            handleIncomingResult(String(msg.data, Charsets.UTF_8))
+        }
+    }
+
+    private fun handleIncomingResult(json: String) {
+        try {
+            val result = PaymentResult.fromJson(json)
+            if (PendingPaymentRegistry.deliver(result)) {
+                Log.i(TAG, "Payment result delivered locally for order ${result.orderId}")
+            } else {
+                Log.i(TAG, "Payment result received on NATS for order ${result.orderId} (no local waiter)")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Ignoring unparseable result payload", e)
         }
     }
 
@@ -180,8 +206,11 @@ internal object LensingProtocolEngine {
 
             publishClaimed(wire.terminalId, wire.orderId)
 
+            PaymentSessionRegistry.store(wire)
+
             val launch = LocalAcquirerLauncher.launchPay(context, config, routing, wire)
             if (!launch.success) {
+                PaymentSessionRegistry.remove(wire.terminalId, wire.orderId)
                 PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId)
                 Log.w(TAG, "Terminal-side local pay launch failed for order ${wire.orderId}")
             } else {
@@ -189,23 +218,6 @@ internal object LensingProtocolEngine {
                 Log.i(TAG, "Terminal-side pay launched (${launch.method}) for order ${wire.orderId}")
             }
         }
-    }
-
-    private fun subscribeForResult(
-        connection: Connection,
-        resultSubject: String,
-        callback: POSRouterCallback
-    ) {
-        val subDispatcher = dispatcher ?: connection.createDispatcher { msg ->
-            val json = String(msg.data, Charsets.UTF_8)
-            try {
-                val result = PaymentResult.fromJson(json)
-                callback.onResult(result)
-            } catch (e: Exception) {
-                callback.onError(POSRouterError("PARSE_ERROR", e.message ?: "Invalid result payload"))
-            }
-        }
-        subDispatcher.subscribe(resultSubject)
     }
 
     private fun publishToSubject(subject: String, payload: String) {
@@ -222,13 +234,12 @@ internal object LensingProtocolEngine {
         while (true) {
             val queued = fallbackQueue.poll() ?: break
             try {
+                PaymentSessionRegistry.store(queued.request)
+                PendingPaymentRegistry.register(queued.request.orderId, queued.callback)
                 connection.publish(queued.subject, queued.payload)
-                subscribeForResult(
-                    connection,
-                    LensingSubjects.resultSubject(queued.request.terminalId),
-                    queued.callback
-                )
             } catch (_: Exception) {
+                PaymentSessionRegistry.remove(queued.request.terminalId, queued.request.orderId)
+                PendingPaymentRegistry.cancel(queued.request.orderId)
                 fallbackQueue.add(queued)
                 break
             }

@@ -2,9 +2,13 @@ package com.posrouter
 
 import android.app.Activity
 import android.content.Context
+import android.net.Uri
 import com.posrouter.core.lensing.LensingProtocolEngine
 import com.posrouter.core.lensing.LensingState
 import com.posrouter.core.lensing.PaymentClaimRegistry
+import com.posrouter.core.lensing.PaymentSessionRegistry
+import com.posrouter.core.lensing.PendingPaymentRegistry
+import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalLaunchMethod
 import com.posrouter.core.local.LocalReachabilityCache
@@ -66,17 +70,8 @@ object POSRouter {
             if (launch.success) {
                 LensingProtocolEngine.publishClaimed(request.terminalId, request.orderId)
                 PaymentClaimRegistry.releaseClaim(request.terminalId, request.orderId)
-                callback.onResult(
-                    PaymentResult(
-                        terminalId = request.terminalId,
-                        status = PaymentStatus.APPROVED,
-                        transactionId = null,
-                        amount = request.amount,
-                        currency = config.currency,
-                        message = localLaunchMessage(launch.method, "pay"),
-                        localRouteMethod = launch.method?.toPublicRouteMethod()
-                    )
-                )
+                PaymentSessionRegistry.store(wire)
+                PendingPaymentRegistry.register(request.orderId, callback)
                 return
             }
 
@@ -86,10 +81,35 @@ object POSRouter {
         LensingProtocolEngine.dispatchTransaction(wire, callback)
     }
 
-    /** Clears an in-flight payment claim after callback or user cancel (same order retry). */
+    /** Clears routing claim only; does not cancel a pending pay callback. */
     fun releasePaymentClaim(orderId: String) {
         val config = LensingContextHolder.config ?: return
         PaymentClaimRegistry.releaseClaim(config.terminalId, orderId)
+    }
+
+    /** Cancels a pending [pay] callback (e.g. user aborted before acquirer responded). */
+    fun cancelPendingPayment(orderId: String) {
+        PendingPaymentRegistry.cancel(orderId)
+        releasePaymentClaim(orderId)
+    }
+
+    /**
+     * Handle acquirer callback URI (e.g. gomenu://pay_result?status=SUCCESS&orderid=...&type=PAY).
+     * Delivers to a pending [pay] callback on this device and publishes to NATS for remote initiators.
+     */
+    fun deliverAcquirerCallback(uri: Uri): PaymentResult? {
+        val config = LensingContextHolder.config ?: return null
+        val orderId = uri.getQueryParameter("orderid")
+            ?: uri.getQueryParameter("orderId")
+            ?: return null
+        val session = PaymentSessionRegistry.lookup(config.terminalId, orderId)
+        val result = AcquirerCallbackParser.parsePayCallback(uri, config, session) ?: return null
+
+        PaymentSessionRegistry.remove(result.terminalId, orderId)
+        PaymentClaimRegistry.releaseClaim(result.terminalId, orderId)
+        PendingPaymentRegistry.deliver(result)
+        LensingProtocolEngine.publishPaymentResult(result)
+        return result
     }
 
     private fun connectResult(config: POSRouterConfig, method: LocalLaunchMethod) = PaymentResult(
