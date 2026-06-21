@@ -3,9 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+group = "com.posrouter"
+
 android {
-    namespace = "io.starrie.posrouter"
-    compileSdk = 35
+    namespace = "com.posrouter"
+    compileSdk = 34
 
     defaultConfig {
         minSdk = 24

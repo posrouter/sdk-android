@@ -1,2 +1,2 @@
--keep class io.starrie.posrouter.** { *; }
+-keep class com.posrouter.** { *; }
 -dontwarn io.nats.**
