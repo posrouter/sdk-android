@@ -12,10 +12,10 @@ internal object AcquirerRegistry {
         "SUPY" to AcquirerRouting("SUPY", "ezypay.com.globe.cardpos", "ezypos://")
     )
 
-    fun resolve(config: POSRouterConfig): AcquirerRouting {
-        val code = config.acquirerCode.uppercase()
+    fun resolve(config: POSRouterConfig, attemptCode: String? = null): AcquirerRouting {
+        val code = (attemptCode ?: config.acquirerCode).uppercase()
         val overridePackage = config.acquirerPackageOverride
-        if (!overridePackage.isNullOrBlank()) {
+        if (!overridePackage.isNullOrBlank() && attemptCode.isNullOrBlank()) {
             return AcquirerRouting(
                 code = code,
                 packageName = overridePackage,

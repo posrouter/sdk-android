@@ -20,4 +20,7 @@ interface POSRouterTerminalListener {
 
     /** Acquirer callback processed (local device completed or cancelled the payment UI). */
     fun onPaymentCompleted(result: PaymentResult) {}
+
+    /** Initiator voided the payment; terminal soft-acknowledged (no forced acquirer exit). */
+    fun onRemotePaymentVoided(orderId: String, attemptId: String, message: String?) {}
 }

@@ -24,6 +24,8 @@ class LensLocalEncoderTest {
                 targetScheme = "ezypos://",
                 acquirerCode = "SUPY",
                 orderId = "GM001",
+                attemptId = "GM001#1",
+                attemptCode = "SUPY",
                 remark = "Table=5|Dinner"
             ),
             com.posrouter.LocalParamSeparator.PIPE

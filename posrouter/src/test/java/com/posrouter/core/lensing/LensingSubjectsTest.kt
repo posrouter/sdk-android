@@ -14,4 +14,9 @@ class LensingSubjectsTest {
     fun resultSubjectFormat() {
         assertEquals("lensing.terminal.TID001.result", LensingSubjects.resultSubject("TID001"))
     }
+
+    @Test
+    fun voidSubjectFormat() {
+        assertEquals("lensing.terminal.TID001.void", LensingSubjects.voidSubject("TID001"))
+    }
 }

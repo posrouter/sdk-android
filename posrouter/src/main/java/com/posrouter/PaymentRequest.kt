@@ -1,10 +1,12 @@
 package com.posrouter
 
+import com.posrouter.core.lensing.PaymentAttemptKey
 import java.math.BigDecimal
 import java.math.RoundingMode
 
 /**
- * Per-transaction payment payload. Acquirer routing targets come from registry [POSRouterConfig.acquirerCode].
+ * Per-transaction payment payload. Acquirer routing targets come from registry [POSRouterConfig.acquirerCode]
+ * unless [attemptCode] overrides the pipeline for this try.
  */
 data class PaymentRequest(
     val terminalId: String,
@@ -12,9 +14,19 @@ data class PaymentRequest(
     val orderId: String,
     val remark: String? = null,
     val method: String? = null,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    /** Unique id for this pay try; SDK auto-generates orderId#N when omitted. */
+    val attemptId: String? = null,
+    /** Pipeline / provider code for this try, e.g. EZYPOS, SKYZER. Defaults to config acquirerCode. */
+    val attemptCode: String? = null,
+    /** Platform sub-merchant (e.g. restaurant on a ordering platform). */
+    val subMerchantId: String? = null
 ) {
-    internal fun toWire(config: POSRouterConfig, routing: com.posrouter.core.registry.AcquirerRouting): WirePaymentRequest =
+    internal fun toWire(
+        config: POSRouterConfig,
+        routing: com.posrouter.core.registry.AcquirerRouting,
+        resolvedAttemptId: String
+    ): WirePaymentRequest =
         WirePaymentRequest(
             terminalId = terminalId,
             amount = amount,
@@ -25,7 +37,10 @@ data class PaymentRequest(
             orderId = orderId,
             remark = remark,
             method = method ?: config.defaultPayMethod,
-            metadata = metadata
+            metadata = metadata,
+            attemptId = resolvedAttemptId,
+            attemptCode = routing.code,
+            subMerchantId = subMerchantId
         )
 
     companion object {
@@ -46,8 +61,11 @@ internal data class WirePaymentRequest(
     val targetScheme: String,
     val acquirerCode: String,
     val orderId: String,
+    val attemptId: String,
+    val attemptCode: String,
     val remark: String? = null,
     val method: String? = null,
+    val subMerchantId: String? = null,
     val metadata: Map<String, String> = emptyMap()
 ) {
     fun toJsonString(): String {
@@ -58,10 +76,13 @@ internal data class WirePaymentRequest(
             """"targetPackageName":"${escapeJson(targetPackageName)}"""",
             """"targetScheme":"${escapeJson(targetScheme)}"""",
             """"orderId":"${escapeJson(orderId)}"""",
+            """"attemptId":"${escapeJson(attemptId)}"""",
+            """"attemptCode":"${escapeJson(attemptCode)}"""",
             """"acquirerCode":"${escapeJson(acquirerCode)}""""
         )
         remark?.let { fields.add(""""remark":"${escapeJson(it)}"""") }
         method?.let { fields.add(""""method":"${escapeJson(it)}"""") }
+        subMerchantId?.let { fields.add(""""subMerchantId":"${escapeJson(it)}"""") }
         if (metadata.isNotEmpty()) {
             val metadataJson = metadata.entries.joinToString(",") { (k, v) ->
                 """"${escapeJson(k)}":"${escapeJson(v)}""""
@@ -92,9 +113,11 @@ internal data class WirePaymentRequest(
             val currency = extract("currency") ?: return null
             val targetPackageName = extract("targetPackageName") ?: return null
             val targetScheme = extract("targetScheme") ?: "ezypos://"
-            val orderId = extract("orderId")
-                ?: extract("orderid")
-                ?: return null
+            val orderId = extract("orderid") ?: extract("orderId") ?: return null
+            val attemptId = extract("attemptId") ?: PaymentAttemptKey.defaultAttemptId(orderId)
+            val attemptCode = extract("attemptCode")
+                ?: extract("acquirerCode")
+                ?: ""
 
             return WirePaymentRequest(
                 terminalId = terminalId,
@@ -102,10 +125,13 @@ internal data class WirePaymentRequest(
                 currency = currency,
                 targetPackageName = targetPackageName,
                 targetScheme = targetScheme,
-                acquirerCode = extract("acquirerCode") ?: "",
+                acquirerCode = extract("acquirerCode") ?: attemptCode,
                 orderId = orderId,
+                attemptId = attemptId,
+                attemptCode = attemptCode,
                 remark = extract("remark"),
-                method = extract("method")
+                method = extract("method"),
+                subMerchantId = extract("subMerchantId")
             )
         }
     }

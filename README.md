@@ -37,3 +37,63 @@ No `<queries>` manifest entries required for the registry-driven model.
 ```
 
 Demo: `../demo-android`
+
+## Publish to Maven (GitHub Packages)
+
+Artifacts: `com.posrouter:posrouter:<version>` (AAR + POM with transitive deps).
+
+### 1. Credentials
+
+Copy `local.properties.example` → `local.properties` and set:
+
+```properties
+gpr.user=YOUR_GITHUB_USERNAME
+gpr.key=ghp_...   # PAT with write:packages (and read:packages)
+```
+
+Or export env vars: `GITHUB_ACTOR`, `GITHUB_TOKEN`.
+
+### 2. Set version
+
+In `gradle.properties`:
+
+```properties
+POSROUTER_VERSION=1.0.0
+```
+
+### 3. Publish
+
+```bash
+./gradlew :posrouter:publishReleasePublicationToGitHubPackagesRepository
+```
+
+Local smoke test without remote upload:
+
+```bash
+./gradlew :posrouter:publishReleasePublicationToMavenLocal
+# → ~/.m2/repository/com/posrouter/posrouter/1.0.0/
+```
+
+### 4. Partner app dependency
+
+In `settings.gradle.kts` repositories:
+
+```kotlin
+maven {
+    url = uri("https://maven.pkg.github.com/posrouter/sdk-android")
+    credentials {
+        username = providers.gradleProperty("gpr.user").get()
+        password = providers.gradleProperty("gpr.key").get()
+    }
+}
+```
+
+In `app/build.gradle.kts`:
+
+```kotlin
+implementation("com.posrouter:posrouter:1.0.0")
+```
+
+Partners need a GitHub PAT with `read:packages` and access to the `posrouter/sdk-android` repo (or org package permissions).
+
+**Alternatives:** Maven Central (public, requires signing + Sonatype onboarding) or a private Nexus/Artifactory if you outgrow GitHub Packages.

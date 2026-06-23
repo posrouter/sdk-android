@@ -27,9 +27,16 @@ internal object AcquirerCallbackParser {
             ?: uri.getQueryParameter("transactionId")
             ?: uri.getQueryParameter("trxid")
 
+        val attemptId = uri.getQueryParameter("attemptid")
+            ?: uri.getQueryParameter("attemptId")
+            ?: session?.attemptId
+
         return PaymentResult(
             terminalId = session?.terminalId ?: config.terminalId,
             orderId = orderId,
+            attemptId = attemptId,
+            attemptCode = session?.attemptCode,
+            subMerchantId = session?.subMerchantId,
             status = mapStatus(statusRaw),
             transactionId = transactionId,
             amount = session?.amount ?: 0L,

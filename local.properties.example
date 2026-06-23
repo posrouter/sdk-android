@@ -1,0 +1,5 @@
+sdk.dir=C\:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk
+
+# GitHub Packages publish — read from local.properties (not auto-loaded by Gradle)
+gpr.user=YOUR_GITHUB_USERNAME
+gpr.key=ghp_...

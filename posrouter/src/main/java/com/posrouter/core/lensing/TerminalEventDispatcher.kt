@@ -43,4 +43,10 @@ internal object TerminalEventDispatcher {
             mainHandler.post { l.onPaymentCompleted(result) }
         }
     }
+
+    fun dispatchRemotePaymentVoided(orderId: String, attemptId: String, message: String?) {
+        listener?.let { l ->
+            mainHandler.post { l.onRemotePaymentVoided(orderId, attemptId, message) }
+        }
+    }
 }

@@ -7,6 +7,26 @@ import org.junit.Test
 class PaymentResultTest {
 
     @Test
+    fun jsonRoundTripIncludesAttemptFields() {
+        val original = PaymentResult(
+            terminalId = "TID001",
+            orderId = "GM202606211347084",
+            attemptId = "GM202606211347084#1",
+            attemptCode = "SUPY",
+            subMerchantId = "REST01",
+            status = PaymentStatus.CANCELLED,
+            transactionId = null,
+            amount = 450L,
+            currency = "NZD",
+            message = "Voided by initiator",
+            metadata = mapOf("cancelReason" to "initiator_void")
+        )
+        val parsed = PaymentResult.fromJson(original.toJsonString())
+        assertEquals("GM202606211347084#1", parsed.attemptId)
+        assertEquals("initiator_void", parsed.metadata["cancelReason"])
+    }
+
+    @Test
     fun jsonRoundTripIncludesOrderId() {
         val original = PaymentResult(
             terminalId = "TID001",

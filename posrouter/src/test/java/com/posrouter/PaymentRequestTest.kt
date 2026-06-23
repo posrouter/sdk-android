@@ -34,7 +34,7 @@ class PaymentRequestTest {
             terminalId = "TID001",
             amount = 1250,
             orderId = "ORD001"
-        ).toWire(config, routing)
+        ).toWire(config, routing, "ORD001#1")
 
         assertEquals("emv_card", wire.method)
     }
@@ -47,7 +47,7 @@ class PaymentRequestTest {
             orderId = "ORD001",
             remark = "Mini Scoop",
             method = "emv_card"
-        ).toWire(config, routing)
+        ).toWire(config, routing, "ORD001#1")
 
         val parsed = WirePaymentRequest.fromJson(wire.toJsonString())
         assertEquals("emv_card", parsed?.method)
@@ -61,7 +61,7 @@ class PaymentRequestTest {
             terminalId = "TID001",
             amount = 1250,
             orderId = "ORD001"
-        ).toWire(config, routing).toJsonString()
+        ).toWire(config, routing, "ORD001#1").toJsonString()
 
         assertTrue(json.contains("\"terminalId\":\"TID001\""))
         assertTrue(json.contains("\"amount\":1250"))
@@ -69,6 +69,8 @@ class PaymentRequestTest {
         assertTrue(json.contains("\"targetPackageName\":\"ezypay.com.globe.cardpos\""))
         assertTrue(json.contains("\"targetScheme\":\"ezypos://\""))
         assertTrue(json.contains("\"orderId\":\"ORD001\""))
+        assertTrue(json.contains("\"attemptId\":\"ORD001#1\""))
+        assertTrue(json.contains("\"attemptCode\":\"SUPY\""))
         assertTrue(!json.contains("\"method\""))
     }
 
@@ -84,7 +86,7 @@ class PaymentRequestTest {
             terminalId = "TID001",
             amount = 1250,
             orderId = "ORD001"
-        ).toWire(config, routing)
+        ).toWire(config, routing, "ORD001#1")
         val parsed = WirePaymentRequest.fromJson(wire.toJsonString())
         assertEquals("ORD001", parsed?.orderId)
         assertEquals(1250L, parsed?.amount)

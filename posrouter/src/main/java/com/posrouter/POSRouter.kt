@@ -5,10 +5,15 @@ import android.content.Context
 import android.net.Uri
 import com.posrouter.core.lensing.LensingProtocolEngine
 import com.posrouter.core.lensing.LensingState
+import com.posrouter.core.lensing.PaymentAttemptIdResolver
+import com.posrouter.core.lensing.PaymentAttemptKey
+import com.posrouter.core.lensing.PaymentAttemptRegistry
 import com.posrouter.core.lensing.PaymentClaimRegistry
-import com.posrouter.core.lensing.PaymentSessionRegistry
-import com.posrouter.core.lensing.PendingPaymentRegistry
+import com.posrouter.core.lensing.PaymentResultDispatcher
+import com.posrouter.core.lensing.PaymentResultSource
+import com.posrouter.core.lensing.PaymentVoidRequest
 import com.posrouter.core.lensing.TerminalEventDispatcher
+import com.posrouter.core.lensing.VoidedAttemptRegistry
 import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalLaunchMethod
@@ -49,49 +54,83 @@ object POSRouter {
 
     fun pay(activity: Activity, request: PaymentRequest, callback: POSRouterCallback) {
         val config = requireConfig()
-        val routing = AcquirerRegistry.resolve(config)
-        val wire = request.toWire(config, routing)
+        val resolvedAttemptId = PaymentAttemptIdResolver.resolve(request.orderId, request.attemptId)
+        val routing = AcquirerRegistry.resolve(config, request.attemptCode)
+        val wire = request.toWire(config, routing, resolvedAttemptId)
 
-        if (PaymentClaimRegistry.isClaimed(request.terminalId, request.orderId)) {
+        if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId, wire.attemptId)) {
             callback.onError(
-                POSRouterError("ALREADY_CLAIMED", "Payment UI already claimed for order ${request.orderId}")
+                POSRouterError("ALREADY_CLAIMED", "Payment UI already claimed for order ${wire.orderId}")
             )
             return
         }
 
         if (LocalReachabilityCache.shouldTryLocal(routing.code)) {
-            if (!PaymentClaimRegistry.tryAcquireClaim(request.terminalId, request.orderId)) {
+            if (!PaymentClaimRegistry.tryAcquireClaim(wire.terminalId, wire.orderId, wire.attemptId)) {
                 callback.onError(
-                    POSRouterError("ALREADY_CLAIMED", "Payment UI already claimed for order ${request.orderId}")
+                    POSRouterError("ALREADY_CLAIMED", "Payment UI already claimed for order ${wire.orderId}")
                 )
                 return
             }
 
             val launch = LocalAcquirerLauncher.launchPay(activity, config, routing, wire)
             if (launch.success) {
-                LensingProtocolEngine.publishClaimed(request.terminalId, request.orderId)
-                PaymentClaimRegistry.releaseClaim(request.terminalId, request.orderId)
-                PaymentSessionRegistry.store(wire)
-                PendingPaymentRegistry.register(request.orderId, callback)
+                LensingProtocolEngine.publishClaimed(wire)
+                PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId, wire.attemptId)
+                PaymentAttemptRegistry.store(wire, callback)
                 return
             }
 
-            PaymentClaimRegistry.releaseClaim(request.terminalId, request.orderId)
+            PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId, wire.attemptId)
         }
 
         LensingProtocolEngine.dispatchTransaction(wire, callback)
     }
 
     /** Clears routing claim only; does not cancel a pending pay callback. */
-    fun releasePaymentClaim(orderId: String) {
+    fun releasePaymentClaim(orderId: String, attemptId: String? = null) {
         val config = LensingContextHolder.config ?: return
-        PaymentClaimRegistry.releaseClaim(config.terminalId, orderId)
+        if (attemptId != null) {
+            PaymentClaimRegistry.releaseClaim(config.terminalId, orderId, attemptId)
+            return
+        }
+        PaymentAttemptRegistry.lookupOpenByOrder(config.terminalId, orderId)?.let { wire ->
+            PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId, wire.attemptId)
+        }
     }
 
-    /** Cancels a pending [pay] callback (e.g. user aborted before acquirer responded). */
-    fun cancelPendingPayment(orderId: String) {
-        PendingPaymentRegistry.cancel(orderId)
-        releasePaymentClaim(orderId)
+    /** Cancels a pending [pay] callback locally without notifying the remote terminal. */
+    fun cancelPendingPayment(orderId: String, attemptId: String? = null) {
+        val config = LensingContextHolder.config ?: return
+        if (attemptId != null) {
+            PaymentAttemptRegistry.cancel(config.terminalId, orderId, attemptId)
+            PaymentClaimRegistry.releaseClaim(config.terminalId, orderId, attemptId)
+        } else {
+            PaymentAttemptRegistry.cancelLatestOpen(config.terminalId, orderId)
+            releasePaymentClaim(orderId)
+        }
+    }
+
+    /**
+     * Void an in-flight payment on the remote terminal (soft void — no forced acquirer exit).
+     * Publishes [LensingSubjects.voidSubject] and keeps the local [pay] callback until the
+     * terminal acks with a cancelled [PaymentResult] (`cancelReason=initiator_void`).
+     */
+    fun voidPayment(orderId: String, attemptId: String? = null): Boolean {
+        val config = LensingContextHolder.config ?: return false
+        val wire = when {
+            attemptId != null -> PaymentAttemptRegistry.lookup(
+                PaymentAttemptKey(config.terminalId, orderId, attemptId)
+            )
+            else -> PaymentAttemptRegistry.lookupOpenByOrder(config.terminalId, orderId)
+        } ?: return false
+
+        val voidReq = PaymentVoidRequest(
+            terminalId = wire.terminalId,
+            orderId = wire.orderId,
+            attemptId = wire.attemptId
+        )
+        return LensingProtocolEngine.publishVoid(voidReq)
     }
 
     /**
@@ -103,15 +142,51 @@ object POSRouter {
         val orderId = uri.getQueryParameter("orderid")
             ?: uri.getQueryParameter("orderId")
             ?: return null
-        val session = PaymentSessionRegistry.lookup(config.terminalId, orderId)
-        val result = AcquirerCallbackParser.parsePayCallback(uri, config, session) ?: return null
+        val session = PaymentAttemptRegistry.lookupOpenByOrder(config.terminalId, orderId)
+        val attemptId = session?.attemptId
+            ?: uri.getQueryParameter("attemptid")
+            ?: uri.getQueryParameter("attemptId")
+        if (attemptId != null &&
+            VoidedAttemptRegistry.isVoided(config.terminalId, orderId, attemptId)
+        ) {
+            android.util.Log.i(
+                "POSRouter",
+                "Ignoring acquirer callback for voided attempt order=$orderId attempt=$attemptId"
+            )
+            return null
+        }
 
-        PaymentSessionRegistry.remove(result.terminalId, orderId)
-        PaymentClaimRegistry.releaseClaim(result.terminalId, orderId)
-        PendingPaymentRegistry.deliver(result)
-        LensingProtocolEngine.publishPaymentResult(result)
-        TerminalEventDispatcher.dispatchPaymentCompleted(result)
+        var result = AcquirerCallbackParser.parsePayCallback(uri, config, session) ?: return null
+
+        if (result.status == PaymentStatus.CANCELLED &&
+            !result.metadata.containsKey("cancelReason")
+        ) {
+            result = result.copy(
+                metadata = result.metadata + ("cancelReason" to PaymentCancelReason.USER_CANCEL)
+            )
+        }
+
+        PaymentResultDispatcher.deliver(result, PaymentResultSource.LOCAL_CALLBACK)
         return result
+    }
+
+    /**
+     * Publish a payment result to NATS when no acquirer deeplink callback is available.
+     * Dedupes by (terminalId, orderId, attemptId).
+     */
+    fun publishPaymentResult(result: PaymentResult): Boolean {
+        val config = LensingContextHolder.config
+        val enriched = when {
+            result.terminalId.isNotBlank() -> result
+            config != null -> result.copy(terminalId = config.terminalId)
+            else -> result
+        }
+        return PaymentResultDispatcher.deliver(
+            enriched,
+            PaymentResultSource.MANUAL_PUBLISH,
+            publishNats = true,
+            dispatchTerminal = true
+        )
     }
 
     fun setTerminalListener(listener: POSRouterTerminalListener?) {

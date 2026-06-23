@@ -19,6 +19,8 @@ class LocalRouteExecutorTest {
                 targetScheme = "ezypos://",
                 acquirerCode = "SUPY",
                 orderId = "GM20260602001",
+                attemptId = "GM20260602001#1",
+                attemptCode = "SUPY",
                 remark = "Table 5"
             ),
             POSRouterConfig(
@@ -72,6 +74,8 @@ class LocalRouteExecutorTest {
                 targetScheme = "ezypos://",
                 acquirerCode = "SUPY",
                 orderId = "GM001",
+                attemptId = "GM001#1",
+                attemptCode = "SUPY",
                 remark = "Mini Scoop",
                 method = "emv_card"
             ),
@@ -103,6 +107,8 @@ class LocalRouteExecutorTest {
                 targetScheme = "ezypos://",
                 acquirerCode = "SUPY",
                 orderId = "GM20260602001",
+                attemptId = "GM20260602001#1",
+                attemptCode = "SUPY",
                 remark = "Table 5",
                 method = "emv_card"
             ),

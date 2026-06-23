@@ -1,5 +1,7 @@
 package com.posrouter
 
+import com.posrouter.core.lensing.PaymentAttemptKey
+
 enum class PaymentStatus {
     APPROVED,
     DECLINED,
@@ -15,7 +17,11 @@ data class PaymentResult(
     val currency: String,
     val message: String?,
     val orderId: String? = null,
-    val localRouteMethod: LocalRouteMethod? = null
+    val attemptId: String? = null,
+    val attemptCode: String? = null,
+    val subMerchantId: String? = null,
+    val localRouteMethod: LocalRouteMethod? = null,
+    val metadata: Map<String, String> = emptyMap()
 ) {
     fun toJsonString(): String {
         val fields = mutableListOf(
@@ -25,8 +31,17 @@ data class PaymentResult(
             """"currency":"${escapeJson(currency)}""""
         )
         orderId?.let { fields.add(""""orderId":"${escapeJson(it)}"""") }
+        attemptId?.let { fields.add(""""attemptId":"${escapeJson(it)}"""") }
+        attemptCode?.let { fields.add(""""attemptCode":"${escapeJson(it)}"""") }
+        subMerchantId?.let { fields.add(""""subMerchantId":"${escapeJson(it)}"""") }
         transactionId?.let { fields.add(""""transactionId":"${escapeJson(it)}"""") }
         message?.let { fields.add(""""message":"${escapeJson(it)}"""") }
+        if (metadata.isNotEmpty()) {
+            val metadataJson = metadata.entries.joinToString(",") { (k, v) ->
+                """"${escapeJson(k)}":"${escapeJson(v)}""""
+            }
+            fields.add(""""metadata":{$metadataJson}""")
+        }
         return "{${fields.joinToString(",")}}"
     }
 
@@ -52,6 +67,17 @@ data class PaymentResult(
                 else -> PaymentStatus.ERROR
             }
 
+            val orderId = extract("orderId") ?: extract("orderid")
+
+            val metadata = mutableMapOf<String, String>()
+            val metadataPattern = "\"metadata\"\\s*:\\s*\\{([^}]*)}".toRegex()
+            metadataPattern.find(json)?.groupValues?.getOrNull(1)?.let { body ->
+                val entryPattern = "\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"".toRegex()
+                for (match in entryPattern.findAll(body)) {
+                    metadata[match.groupValues[1]] = match.groupValues[2]
+                }
+            }
+
             return PaymentResult(
                 terminalId = extract("terminalId") ?: "",
                 status = status,
@@ -59,7 +85,12 @@ data class PaymentResult(
                 amount = extractLong("amount"),
                 currency = extract("currency") ?: "",
                 message = extract("message"),
-                orderId = extract("orderId") ?: extract("orderid")
+                orderId = orderId,
+                attemptId = extract("attemptId")
+                    ?: orderId?.let { PaymentAttemptKey.defaultAttemptId(it) },
+                attemptCode = extract("attemptCode"),
+                subMerchantId = extract("subMerchantId"),
+                metadata = metadata
             )
         }
     }

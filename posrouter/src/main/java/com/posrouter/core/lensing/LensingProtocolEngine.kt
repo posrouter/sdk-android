@@ -34,6 +34,8 @@ internal object LensingProtocolEngine {
     private val fallbackQueue = ConcurrentLinkedQueue<QueuedMessage>()
     private var reconnectAttempt = 0
     private const val MAX_BACKOFF_MS = 30_000L
+    /** Suppress marking claims from our own NATS publish (subscriber echo). */
+    private val ownClaimedEchoKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     fun start(config: POSRouterConfig) {
         terminalId = config.terminalId
@@ -110,10 +112,12 @@ internal object LensingProtocolEngine {
 
     fun currentState(): LensingState = state
 
-    fun publishClaimed(terminalId: String, orderId: String) {
-        val claim = PaymentClaim(terminalId, orderId)
+    fun publishClaimed(wire: WirePaymentRequest) {
+        val claim = PaymentClaim(wire.terminalId, wire.orderId, wire.attemptId)
         PaymentClaimRegistry.markClaimed(claim)
-        publishToSubject(LensingSubjects.claimedSubject(terminalId), claim.toJsonString())
+        val echoKey = PaymentAttemptKey(wire.terminalId, wire.orderId, wire.attemptId).storageKey()
+        ownClaimedEchoKeys.add(echoKey)
+        publishToSubject(LensingSubjects.claimedSubject(wire.terminalId), claim.toJsonString())
     }
 
     fun dispatchTransaction(request: WirePaymentRequest, callback: POSRouterCallback) {
@@ -129,15 +133,13 @@ internal object LensingProtocolEngine {
             return
         }
 
-        PaymentSessionRegistry.store(request)
-        PendingPaymentRegistry.register(request.orderId, callback)
+        PaymentAttemptRegistry.store(request, callback)
 
         try {
             connection.publish(targetSubject, payloadBytes)
-            Log.i(TAG, "Pay dispatched on NATS for order ${request.orderId}")
+            Log.i(TAG, "Pay dispatched on NATS for order ${request.orderId} attempt ${request.attemptId}")
         } catch (e: Exception) {
-            PaymentSessionRegistry.remove(request.terminalId, request.orderId)
-            PendingPaymentRegistry.cancel(request.orderId)
+            PaymentAttemptRegistry.close(request.terminalId, request.orderId, request.attemptId)
             fallbackQueue.add(QueuedMessage(targetSubject, payloadBytes, request, callback))
             callback.onError(POSRouterError("PUBLISH_FAILED", e.message ?: "Failed to publish"))
         }
@@ -146,7 +148,54 @@ internal object LensingProtocolEngine {
     fun publishPaymentResult(result: PaymentResult) {
         val tid = result.terminalId.ifBlank { terminalId } ?: return
         publishToSubject(LensingSubjects.resultSubject(tid), result.toJsonString())
-        Log.i(TAG, "Payment result published for order ${result.orderId} status=${result.status}")
+        Log.i(TAG, "Payment result published for order ${result.orderId} attempt=${result.attemptId} status=${result.status}")
+    }
+
+    fun publishVoid(request: PaymentVoidRequest): Boolean {
+        val connection = natsConnection
+        if (connection == null || state != LensingState.CONNECTED) {
+            Log.w(TAG, "Cannot publish void: NATS not connected")
+            return false
+        }
+        VoidedAttemptRegistry.mark(request.terminalId, request.orderId, request.attemptId)
+        return try {
+            publishToSubject(LensingSubjects.voidSubject(request.terminalId), request.toJsonString())
+            Log.i(
+                TAG,
+                "Void published for order ${request.orderId} attempt ${request.attemptId}"
+            )
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to publish void for order ${request.orderId}", e)
+            false
+        }
+    }
+
+    internal fun acknowledgeInitiatorVoid(voidReq: PaymentVoidRequest, session: WirePaymentRequest?) {
+        val config = LensingContextHolder.config
+        val result = PaymentResult(
+            terminalId = voidReq.terminalId,
+            orderId = voidReq.orderId,
+            attemptId = voidReq.attemptId,
+            attemptCode = session?.attemptCode,
+            status = com.posrouter.PaymentStatus.CANCELLED,
+            transactionId = null,
+            amount = session?.amount ?: 0L,
+            currency = session?.currency ?: config?.currency.orEmpty(),
+            message = "Voided by initiator",
+            metadata = mapOf("cancelReason" to com.posrouter.PaymentCancelReason.INITIATOR_VOID)
+        )
+        PaymentResultDispatcher.deliver(
+            result,
+            PaymentResultSource.VOID_ACK,
+            dispatchTerminal = false
+        )
+        TerminalEventDispatcher.dispatchRemotePaymentVoided(
+            voidReq.orderId,
+            voidReq.attemptId,
+            result.message
+        )
+        Log.i(TAG, "Void ack published for order ${voidReq.orderId} attempt ${voidReq.attemptId}")
     }
 
     private fun setupTerminalSubscriptions(tid: String) {
@@ -155,8 +204,14 @@ internal object LensingProtocolEngine {
 
         subDispatcher.subscribe(LensingSubjects.claimedSubject(tid)) { msg ->
             PaymentClaim.fromJson(String(msg.data, Charsets.UTF_8))?.let { claim ->
+                val echoKey = PaymentAttemptKey(claim.terminalId, claim.orderId, claim.attemptId)
+                    .storageKey()
+                if (ownClaimedEchoKeys.remove(echoKey)) {
+                    Log.d(TAG, "Ignored own claimed echo for order ${claim.orderId}")
+                    return@let
+                }
                 PaymentClaimRegistry.markClaimed(claim)
-                Log.i(TAG, "Payment UI claimed by remote for order ${claim.orderId}")
+                Log.i(TAG, "Payment UI claimed by remote for order ${claim.orderId} attempt ${claim.attemptId}")
             }
         }
 
@@ -167,19 +222,62 @@ internal object LensingProtocolEngine {
         subDispatcher.subscribe(LensingSubjects.resultSubject(tid)) { msg ->
             handleIncomingResult(String(msg.data, Charsets.UTF_8))
         }
+
+        subDispatcher.subscribe(LensingSubjects.voidSubject(tid)) { msg ->
+            handleIncomingVoid(String(msg.data, Charsets.UTF_8))
+        }
     }
 
     private fun handleIncomingResult(json: String) {
         try {
             val result = PaymentResult.fromJson(json)
-            if (PendingPaymentRegistry.deliver(result)) {
-                Log.i(TAG, "Payment result delivered locally for order ${result.orderId}")
-            } else {
-                Log.i(TAG, "Payment result received on NATS for order ${result.orderId} (no local waiter)")
+            if (PaymentResultDispatcher.deliver(
+                    result,
+                    PaymentResultSource.NATS_INBOUND,
+                    publishNats = false,
+                    dispatchTerminal = false
+                )
+            ) {
+                Log.i(TAG, "Payment result handled from NATS order=${result.orderId} attempt=${result.attemptId}")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Ignoring unparseable result payload", e)
         }
+    }
+
+    private fun handleIncomingVoid(json: String) {
+        val voidReq = PaymentVoidRequest.fromJson(json) ?: run {
+            Log.w(TAG, "Ignoring unparseable void payload")
+            return
+        }
+
+        if (PaymentAttemptRegistry.hasInitiatorCallback(
+                voidReq.terminalId,
+                voidReq.orderId,
+                voidReq.attemptId
+            )
+        ) {
+            Log.i(
+                TAG,
+                "Void ignored on initiator device for order ${voidReq.orderId} attempt ${voidReq.attemptId}"
+            )
+            return
+        }
+
+        if (VoidedAttemptRegistry.isVoided(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)) {
+            Log.d(TAG, "Void ignored: attempt already voided order=${voidReq.orderId}")
+            return
+        }
+
+        val session = PaymentAttemptRegistry.lookup(
+            PaymentAttemptKey(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
+        ) ?: PaymentAttemptRegistry.lookupOpenByOrder(voidReq.terminalId, voidReq.orderId)
+
+        VoidedAttemptRegistry.mark(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
+        PaymentAttemptRegistry.close(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
+        PaymentClaimRegistry.releaseClaim(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
+
+        acknowledgeInitiatorVoid(voidReq, session)
     }
 
     private fun handleIncomingPay(json: String) {
@@ -188,14 +286,27 @@ internal object LensingProtocolEngine {
             return
         }
 
-        if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId)) {
-            Log.i(TAG, "Pay ignored: order ${wire.orderId} already claimed")
+        if (PaymentAttemptRegistry.hasInitiatorCallback(wire)) {
+            Log.i(
+                TAG,
+                "Pay ignored on initiator device for order ${wire.orderId} attempt ${wire.attemptId}"
+            )
+            return
+        }
+
+        if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId, wire.attemptId)) {
+            Log.i(TAG, "Pay ignored: order ${wire.orderId} attempt ${wire.attemptId} already claimed")
+            return
+        }
+
+        if (VoidedAttemptRegistry.isVoided(wire.terminalId, wire.orderId, wire.attemptId)) {
+            Log.i(TAG, "Pay ignored: order ${wire.orderId} attempt ${wire.attemptId} already voided")
             return
         }
 
         val context = LensingContextHolder.applicationContext ?: return
         val config = LensingContextHolder.config ?: return
-        val routing = AcquirerRegistry.resolve(config)
+        val routing = AcquirerRegistry.resolve(config, wire.attemptCode)
 
         if (!LocalReachabilityCache.shouldTryLocal(routing.code)) {
             Log.d(TAG, "Pay received on NATS but local acquirer ${routing.code} cached unreachable")
@@ -203,18 +314,18 @@ internal object LensingProtocolEngine {
         }
 
         mainScope.launch {
-            if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId)) {
-                Log.i(TAG, "Pay aborted before launch: order ${wire.orderId} claimed by peer")
+            if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId, wire.attemptId)) {
+                Log.i(TAG, "Pay aborted before launch: order ${wire.orderId} attempt ${wire.attemptId} claimed")
                 return@launch
             }
-            if (!PaymentClaimRegistry.tryAcquireClaim(wire.terminalId, wire.orderId)) {
+            if (!PaymentClaimRegistry.tryAcquireClaim(wire.terminalId, wire.orderId, wire.attemptId)) {
                 Log.i(TAG, "Pay aborted: failed to acquire claim for order ${wire.orderId}")
                 return@launch
             }
 
-            publishClaimed(wire.terminalId, wire.orderId)
+            publishClaimed(wire)
 
-            PaymentSessionRegistry.store(wire)
+            PaymentAttemptRegistry.store(wire, callback = null)
 
             TerminalEventDispatcher.dispatchRemotePaymentReceived(
                 orderId = wire.orderId,
@@ -226,15 +337,14 @@ internal object LensingProtocolEngine {
 
             val launch = LocalAcquirerLauncher.launchPay(context, config, routing, wire)
             if (!launch.success) {
-                PaymentSessionRegistry.remove(wire.terminalId, wire.orderId)
-                PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId)
+                PaymentAttemptRegistry.close(wire.terminalId, wire.orderId, wire.attemptId)
+                PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId, wire.attemptId)
                 TerminalEventDispatcher.dispatchRemotePaymentLaunchFailed(
                     wire.orderId,
                     "Could not launch local acquirer"
                 )
                 Log.w(TAG, "Terminal-side local pay launch failed for order ${wire.orderId}")
             } else {
-                PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId)
                 Log.i(TAG, "Terminal-side pay launched (${launch.method}) for order ${wire.orderId}")
             }
         }
@@ -254,12 +364,14 @@ internal object LensingProtocolEngine {
         while (true) {
             val queued = fallbackQueue.poll() ?: break
             try {
-                PaymentSessionRegistry.store(queued.request)
-                PendingPaymentRegistry.register(queued.request.orderId, queued.callback)
+                PaymentAttemptRegistry.store(queued.request, queued.callback)
                 connection.publish(queued.subject, queued.payload)
             } catch (_: Exception) {
-                PaymentSessionRegistry.remove(queued.request.terminalId, queued.request.orderId)
-                PendingPaymentRegistry.cancel(queued.request.orderId)
+                PaymentAttemptRegistry.close(
+                    queued.request.terminalId,
+                    queued.request.orderId,
+                    queued.request.attemptId
+                )
                 fallbackQueue.add(queued)
                 break
             }
