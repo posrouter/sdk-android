@@ -12,6 +12,8 @@ import com.posrouter.core.lensing.PaymentClaimRegistry
 import com.posrouter.core.lensing.PaymentResultDispatcher
 import com.posrouter.core.lensing.PaymentResultSource
 import com.posrouter.core.lensing.PaymentVoidRequest
+import com.posrouter.core.lensing.RefundAttemptIdResolver
+import com.posrouter.core.lensing.RefundAttemptRegistry
 import com.posrouter.core.lensing.TerminalEventDispatcher
 import com.posrouter.core.lensing.VoidedAttemptRegistry
 import com.posrouter.core.local.AcquirerCallbackParser
@@ -87,6 +89,23 @@ object POSRouter {
         LensingProtocolEngine.dispatchTransaction(wire, callback)
     }
 
+    fun refund(activity: Activity, request: RefundRequest, callback: POSRouterCallback) {
+        val config = requireConfig()
+        val resolvedAttemptId = RefundAttemptIdResolver.resolve(request.orderId, request.attemptId)
+        val routing = AcquirerRegistry.resolve(config, request.attemptCode)
+        val wire = request.toWire(config, routing, resolvedAttemptId)
+
+        if (LocalReachabilityCache.shouldTryLocal(routing.code)) {
+            val launch = LocalAcquirerLauncher.launchRefund(activity, config, routing, wire)
+            if (launch.success) {
+                RefundAttemptRegistry.store(wire, callback)
+                return
+            }
+        }
+
+        LensingProtocolEngine.dispatchRefund(wire, callback)
+    }
+
     /** Clears routing claim only; does not cancel a pending pay callback. */
     fun releasePaymentClaim(orderId: String, attemptId: String? = null) {
         val config = LensingContextHolder.config ?: return
@@ -126,6 +145,9 @@ object POSRouter {
         } ?: return false
 
         val voidReq = PaymentVoidRequest(
+            acquirerCode = wire.acquirerCode,
+            merchantId = wire.merchantId,
+            subMerchantId = wire.subMerchantId,
             terminalId = wire.terminalId,
             orderId = wire.orderId,
             attemptId = wire.attemptId
@@ -139,6 +161,15 @@ object POSRouter {
      */
     fun deliverAcquirerCallback(uri: Uri): PaymentResult? {
         val config = LensingContextHolder.config ?: return null
+
+        AcquirerCallbackParser.parseRefundCallback(uri, config)?.let { parsed ->
+            val enriched = parsed.copy(
+                metadata = parsed.metadata + ("operation" to "refund")
+            )
+            PaymentResultDispatcher.deliver(enriched, PaymentResultSource.LOCAL_CALLBACK)
+            return enriched
+        }
+
         val orderId = uri.getQueryParameter("orderid")
             ?: uri.getQueryParameter("orderId")
             ?: return null

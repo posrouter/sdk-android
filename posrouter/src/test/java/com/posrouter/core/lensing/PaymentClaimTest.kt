@@ -11,7 +11,8 @@ class PaymentClaimTest {
 
     @Test
     fun claimedSubjectFollowsConvention() {
-        assertEquals("lensing.terminal.TID001.claimed", LensingSubjects.claimedSubject("TID001"))
+        val scope = LensingSubjectScope("SUPY", "abc123", null, "TID001")
+        assertEquals("lensing.SUPY.abc123._.TID001.claimed", LensingSubjects.claimedSubject(scope))
     }
 
     @Test

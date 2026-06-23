@@ -8,6 +8,8 @@ data class POSRouterConfig(
     /** Partner registry code to pay, e.g. SUPY */
     val acquirerCode: String,
     val merchantId: String,
+    /** Platform sub-merchant; omitted on NATS subject as `_`. Must not equal `_`. */
+    val subMerchantId: String? = null,
     val callbackUrl: String? = null,
     val currency: String = "NZD",
     /** Optional overrides when Gateway matrix is unavailable */

@@ -5,6 +5,8 @@ import com.posrouter.POSRouterConfig
 import com.posrouter.PaymentResult
 import com.posrouter.PaymentStatus
 import com.posrouter.WirePaymentRequest
+import com.posrouter.core.lensing.RefundAttemptIdResolver
+import com.posrouter.core.lensing.RefundAttemptRegistry
 
 internal object AcquirerCallbackParser {
 
@@ -42,6 +44,45 @@ internal object AcquirerCallbackParser {
             amount = session?.amount ?: 0L,
             currency = session?.currency ?: config.currency,
             message = uri.getQueryParameter("message") ?: statusRaw.ifBlank { null }
+        )
+    }
+
+    fun parseRefundCallback(
+        uri: Uri,
+        config: POSRouterConfig
+    ): PaymentResult? {
+        if (uri.scheme != "gomenu" || uri.host != "pay_result") return null
+
+        val type = uri.getQueryParameter("type")?.uppercase().orEmpty()
+        if (type != "REFUND") return null
+
+        val orderId = uri.getQueryParameter("orderid")
+            ?: uri.getQueryParameter("orderId")
+            ?: return null
+
+        val statusRaw = uri.getQueryParameter("status").orEmpty()
+        val transactionId = uri.getQueryParameter("transactionid")
+            ?: uri.getQueryParameter("transactionId")
+            ?: uri.getQueryParameter("trxid")
+
+        val attemptId = uri.getQueryParameter("attemptid")
+            ?: uri.getQueryParameter("attemptId")
+            ?: RefundAttemptIdResolver.defaultAttemptId(orderId)
+
+        val pending = RefundAttemptRegistry.lookup(config.terminalId, orderId, attemptId)
+
+        return PaymentResult(
+            terminalId = pending?.terminalId ?: config.terminalId,
+            orderId = orderId,
+            attemptId = attemptId,
+            attemptCode = pending?.attemptCode,
+            subMerchantId = pending?.subMerchantId,
+            status = mapStatus(statusRaw),
+            transactionId = transactionId,
+            amount = pending?.amount ?: 0L,
+            currency = pending?.currency ?: config.currency,
+            message = uri.getQueryParameter("message") ?: statusRaw.ifBlank { null },
+            metadata = mapOf("operation" to "refund")
         )
     }
 

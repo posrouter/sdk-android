@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.posrouter.POSRouterConfig
 import com.posrouter.WirePaymentRequest
+import com.posrouter.WireRefundRequest
 import com.posrouter.core.registry.AcquirerRouting
 
 internal object LocalRouteExecutor {
@@ -45,6 +46,28 @@ internal object LocalRouteExecutor {
         routing.packageName
     )
 
+    fun launchRefundViaExplicitIntent(
+        context: Context,
+        config: POSRouterConfig,
+        routing: AcquirerRouting,
+        request: WireRefundRequest
+    ): Boolean = launchExplicitIntent(
+        context,
+        routing.packageName,
+        buildRefundLensData(request, config)
+    )
+
+    fun launchRefundViaDeepLink(
+        context: Context,
+        config: POSRouterConfig,
+        routing: AcquirerRouting,
+        request: WireRefundRequest
+    ): Boolean = launchDeepLink(
+        context,
+        LocalDeepLinkUriBuilder.buildRefundUri(request, config),
+        routing.packageName
+    )
+
     internal fun buildConnectLensData(config: POSRouterConfig): String {
         val separator = config.localParamSeparator
         val parts = mutableListOf(
@@ -68,6 +91,18 @@ internal object LocalRouteExecutor {
         request.remark?.let { parts.add(LensLocalEncoder.pair("remark", it, separator)) }
         request.method?.let { parts.add(LensLocalEncoder.pair("method", it, separator)) }
         config.callbackUrl?.let { parts.add(LensLocalEncoder.pair("callback_url", it, separator)) }
+        return LensLocalEncoder.joinPairs(parts, separator)
+    }
+
+    internal fun buildRefundLensData(
+        request: WireRefundRequest,
+        config: POSRouterConfig
+    ): String {
+        val separator = config.localParamSeparator
+        val parts = listOf(
+            LensLocalEncoder.pair("amount", formatAmountDecimal(request.amount), separator),
+            LensLocalEncoder.pair("orderid", request.orderId, separator)
+        )
         return LensLocalEncoder.joinPairs(parts, separator)
     }
 

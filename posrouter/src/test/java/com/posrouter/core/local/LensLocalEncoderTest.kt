@@ -23,6 +23,7 @@ class LensLocalEncoderTest {
                 targetPackageName = "com.ezypos.app",
                 targetScheme = "ezypos://",
                 acquirerCode = "SUPY",
+                merchantId = "abc123",
                 orderId = "GM001",
                 attemptId = "GM001#1",
                 attemptCode = "SUPY",

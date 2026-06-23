@@ -4,6 +4,7 @@ import android.util.Log
 import com.posrouter.LensingContextHolder
 import com.posrouter.POSRouterConfig
 import com.posrouter.WirePaymentRequest
+import com.posrouter.WireRefundRequest
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalReachabilityCache
 import com.posrouter.core.registry.AcquirerRegistry
@@ -29,7 +30,7 @@ internal object LensingProtocolEngine {
     private var natsConnection: Connection? = null
     private var dispatcher: Dispatcher? = null
     private var state: LensingState = LensingState.IDLE
-    private var terminalId: String? = null
+    private var subscriptionScope: LensingSubjectScope? = null
 
     private val fallbackQueue = ConcurrentLinkedQueue<QueuedMessage>()
     private var reconnectAttempt = 0
@@ -38,7 +39,7 @@ internal object LensingProtocolEngine {
     private val ownClaimedEchoKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     fun start(config: POSRouterConfig) {
-        terminalId = config.terminalId
+        subscriptionScope = LensingSubjectScope.fromConfig(config)
         state = LensingState.DISCOVERING
         TerminalEventDispatcher.dispatchNatsState(state)
 
@@ -49,7 +50,7 @@ internal object LensingProtocolEngine {
                     config.participantKey
                 )
                 AcquirerRegistry.prefetch(config)
-                connectNats(credentials.natsUrl, credentials.natsToken, config.terminalId)
+                connectNats(credentials.natsUrl, credentials.natsToken, LensingSubjectScope.fromConfig(config))
             } catch (e: Exception) {
                 state = LensingState.FAILED
                 TerminalEventDispatcher.dispatchNatsState(state)
@@ -58,7 +59,8 @@ internal object LensingProtocolEngine {
         }
     }
 
-    private fun connectNats(url: String, token: String, tid: String) {
+    private fun connectNats(url: String, token: String, subjectScope: LensingSubjectScope) {
+        subscriptionScope = subjectScope
         state = LensingState.CONNECTING
         TerminalEventDispatcher.dispatchNatsState(state)
         try {
@@ -70,7 +72,7 @@ internal object LensingProtocolEngine {
                         io.nats.client.ConnectionListener.Events.DISCONNECTED -> {
                             state = LensingState.RECONNECTING
                             TerminalEventDispatcher.dispatchNatsState(state)
-                            scheduleReconnect(url, token, tid)
+                            scheduleReconnect(url, token, subjectScope)
                         }
                         io.nats.client.ConnectionListener.Events.RECONNECTED -> {
                             state = LensingState.CONNECTED
@@ -92,21 +94,21 @@ internal object LensingProtocolEngine {
             state = LensingState.CONNECTED
             TerminalEventDispatcher.dispatchNatsState(state)
             reconnectAttempt = 0
-            setupTerminalSubscriptions(tid)
+            setupTerminalSubscriptions(subjectScope)
             flushFallbackQueue()
         } catch (e: Exception) {
             state = LensingState.RECONNECTING
             TerminalEventDispatcher.dispatchNatsState(state)
-            scheduleReconnect(url, token, tid)
+            scheduleReconnect(url, token, subjectScope)
         }
     }
 
-    private fun scheduleReconnect(url: String, token: String, tid: String) {
+    private fun scheduleReconnect(url: String, token: String, subjectScope: LensingSubjectScope) {
         scope.launch {
             val delayMs = min(MAX_BACKOFF_MS, 1000L * (1 shl reconnectAttempt))
             reconnectAttempt++
             kotlinx.coroutines.delay(delayMs)
-            connectNats(url, token, tid)
+            connectNats(url, token, subjectScope)
         }
     }
 
@@ -117,11 +119,14 @@ internal object LensingProtocolEngine {
         PaymentClaimRegistry.markClaimed(claim)
         val echoKey = PaymentAttemptKey(wire.terminalId, wire.orderId, wire.attemptId).storageKey()
         ownClaimedEchoKeys.add(echoKey)
-        publishToSubject(LensingSubjects.claimedSubject(wire.terminalId), claim.toJsonString())
+        publishToSubject(
+            LensingSubjects.claimedSubject(LensingSubjectScope.fromWire(wire)),
+            claim.toJsonString()
+        )
     }
 
     fun dispatchTransaction(request: WirePaymentRequest, callback: POSRouterCallback) {
-        val targetSubject = LensingSubjects.paySubject(request.terminalId)
+        val targetSubject = LensingSubjects.paySubject(LensingSubjectScope.fromWire(request))
         val payloadBytes = request.toJsonString().toByteArray(Charsets.UTF_8)
 
         val connection = natsConnection
@@ -145,10 +150,59 @@ internal object LensingProtocolEngine {
         }
     }
 
+    fun dispatchRefund(request: WireRefundRequest, callback: POSRouterCallback) {
+        val targetSubject = LensingSubjects.refundSubject(request.subjectScope())
+        val payloadBytes = request.toJsonString().toByteArray(Charsets.UTF_8)
+
+        val connection = natsConnection
+        if (connection == null || state != LensingState.CONNECTED) {
+            if (state == LensingState.IDLE || state == LensingState.FAILED) {
+                callback.onError(POSRouterError("NOT_INITIALIZED", "Lensing engine not connected"))
+            } else {
+                RefundAttemptRegistry.store(request, callback)
+                callback.onError(POSRouterError("CONNECTING", "Refund queued until NATS reconnects"))
+            }
+            return
+        }
+
+        RefundAttemptRegistry.store(request, callback)
+
+        try {
+            connection.publish(targetSubject, payloadBytes)
+            Log.i(TAG, "Refund dispatched on NATS for order ${request.orderId} attempt ${request.attemptId}")
+        } catch (e: Exception) {
+            RefundAttemptRegistry.close(request)
+            callback.onError(POSRouterError("PUBLISH_FAILED", e.message ?: "Failed to publish refund"))
+        }
+    }
+
     fun publishPaymentResult(result: PaymentResult) {
-        val tid = result.terminalId.ifBlank { terminalId } ?: return
-        publishToSubject(LensingSubjects.resultSubject(tid), result.toJsonString())
+        val subjectScope = resolveResultScope(result) ?: return
+        publishToSubject(LensingSubjects.resultSubject(subjectScope), result.toJsonString())
         Log.i(TAG, "Payment result published for order ${result.orderId} attempt=${result.attemptId} status=${result.status}")
+    }
+
+    private fun resolveResultScope(result: PaymentResult): LensingSubjectScope? {
+        val config = LensingContextHolder.config
+        val tid = result.terminalId.ifBlank { config?.terminalId.orEmpty() }
+        if (tid.isBlank()) return null
+        val orderId = result.orderId
+        val attemptId = result.attemptId
+        if (orderId != null && attemptId != null) {
+            PaymentAttemptRegistry.lookup(PaymentAttemptKey(tid, orderId, attemptId))?.let {
+                return LensingSubjectScope.fromWire(it)
+            }
+            RefundAttemptRegistry.lookup(tid, orderId, attemptId)?.let {
+                return it.subjectScope()
+            }
+        }
+        val cfg = config ?: return null
+        return LensingSubjectScope(
+            acquirerCode = cfg.acquirerCode,
+            merchantId = cfg.merchantId,
+            subMerchantId = result.subMerchantId ?: cfg.subMerchantId,
+            terminalId = tid
+        )
     }
 
     fun publishVoid(request: PaymentVoidRequest): Boolean {
@@ -159,7 +213,7 @@ internal object LensingProtocolEngine {
         }
         VoidedAttemptRegistry.mark(request.terminalId, request.orderId, request.attemptId)
         return try {
-            publishToSubject(LensingSubjects.voidSubject(request.terminalId), request.toJsonString())
+            publishToSubject(LensingSubjects.voidSubject(request.subjectScope()), request.toJsonString())
             Log.i(
                 TAG,
                 "Void published for order ${request.orderId} attempt ${request.attemptId}"
@@ -198,11 +252,11 @@ internal object LensingProtocolEngine {
         Log.i(TAG, "Void ack published for order ${voidReq.orderId} attempt ${voidReq.attemptId}")
     }
 
-    private fun setupTerminalSubscriptions(tid: String) {
+    private fun setupTerminalSubscriptions(subjectScope: LensingSubjectScope) {
         val connection = natsConnection ?: return
         val subDispatcher = dispatcher ?: connection.createDispatcher { }.also { dispatcher = it }
 
-        subDispatcher.subscribe(LensingSubjects.claimedSubject(tid)) { msg ->
+        subDispatcher.subscribe(LensingSubjects.claimedSubject(subjectScope)) { msg ->
             PaymentClaim.fromJson(String(msg.data, Charsets.UTF_8))?.let { claim ->
                 val echoKey = PaymentAttemptKey(claim.terminalId, claim.orderId, claim.attemptId)
                     .storageKey()
@@ -215,16 +269,20 @@ internal object LensingProtocolEngine {
             }
         }
 
-        subDispatcher.subscribe(LensingSubjects.paySubject(tid)) { msg ->
+        subDispatcher.subscribe(LensingSubjects.paySubject(subjectScope)) { msg ->
             handleIncomingPay(String(msg.data, Charsets.UTF_8))
         }
 
-        subDispatcher.subscribe(LensingSubjects.resultSubject(tid)) { msg ->
+        subDispatcher.subscribe(LensingSubjects.resultSubject(subjectScope)) { msg ->
             handleIncomingResult(String(msg.data, Charsets.UTF_8))
         }
 
-        subDispatcher.subscribe(LensingSubjects.voidSubject(tid)) { msg ->
+        subDispatcher.subscribe(LensingSubjects.voidSubject(subjectScope)) { msg ->
             handleIncomingVoid(String(msg.data, Charsets.UTF_8))
+        }
+
+        subDispatcher.subscribe(LensingSubjects.refundSubject(subjectScope)) { msg ->
+            handleIncomingRefund(String(msg.data, Charsets.UTF_8))
         }
     }
 
@@ -278,6 +336,43 @@ internal object LensingProtocolEngine {
         PaymentClaimRegistry.releaseClaim(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
 
         acknowledgeInitiatorVoid(voidReq, session)
+    }
+
+    private fun handleIncomingRefund(json: String) {
+        val wire = WireRefundRequest.fromJson(json) ?: run {
+            Log.w(TAG, "Ignoring unparseable refund payload")
+            return
+        }
+
+        val context = LensingContextHolder.applicationContext ?: return
+        val config = LensingContextHolder.config ?: return
+        val routing = AcquirerRegistry.resolve(config, wire.attemptCode)
+
+        if (!LocalReachabilityCache.shouldTryLocal(routing.code)) {
+            Log.d(TAG, "Refund received on NATS but local acquirer ${routing.code} cached unreachable")
+            return
+        }
+
+        mainScope.launch {
+            TerminalEventDispatcher.dispatchRemotePaymentReceived(
+                orderId = wire.orderId,
+                amountCents = wire.amount,
+                currency = wire.currency,
+                remark = "Refund",
+                method = null
+            )
+
+            val launch = LocalAcquirerLauncher.launchRefund(context, config, routing, wire)
+            if (!launch.success) {
+                TerminalEventDispatcher.dispatchRemotePaymentLaunchFailed(
+                    wire.orderId,
+                    "Could not launch local acquirer refund"
+                )
+                Log.w(TAG, "Terminal-side local refund launch failed for order ${wire.orderId}")
+            } else {
+                Log.i(TAG, "Terminal-side refund launched (${launch.method}) for order ${wire.orderId}")
+            }
+        }
     }
 
     private fun handleIncomingPay(json: String) {

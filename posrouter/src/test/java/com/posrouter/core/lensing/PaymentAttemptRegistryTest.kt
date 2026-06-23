@@ -16,6 +16,7 @@ class PaymentAttemptRegistryTest {
         targetPackageName = "com.ezypos.app",
         targetScheme = "ezypos://",
         acquirerCode = "SUPY",
+        merchantId = "abc123",
         orderId = "ORD1",
         attemptId = attemptId,
         attemptCode = "SUPY"

@@ -71,6 +71,7 @@ class PaymentRequestTest {
         assertTrue(json.contains("\"orderId\":\"ORD001\""))
         assertTrue(json.contains("\"attemptId\":\"ORD001#1\""))
         assertTrue(json.contains("\"attemptCode\":\"SUPY\""))
+        assertTrue(json.contains("\"merchantId\":\"abc123\""))
         assertTrue(!json.contains("\"method\""))
     }
 

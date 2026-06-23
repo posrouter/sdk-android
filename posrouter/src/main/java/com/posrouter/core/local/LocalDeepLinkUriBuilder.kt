@@ -4,6 +4,7 @@ import android.net.Uri
 import com.posrouter.LocalParamSeparator
 import com.posrouter.POSRouterConfig
 import com.posrouter.WirePaymentRequest
+import com.posrouter.WireRefundRequest
 import com.posrouter.core.registry.AcquirerRegistry
 
 internal object LocalDeepLinkUriBuilder {
@@ -13,6 +14,21 @@ internal object LocalDeepLinkUriBuilder {
 
     fun buildConnectUri(config: POSRouterConfig): Uri =
         Uri.parse(buildConnectUriString(config))
+
+    fun buildRefundUri(request: WireRefundRequest, config: POSRouterConfig): Uri =
+        Uri.parse(buildRefundUriString(request, config.localParamSeparator))
+
+    internal fun buildRefundUriString(
+        request: WireRefundRequest,
+        separator: LocalParamSeparator = LocalParamSeparator.PIPE
+    ): String {
+        val scheme = parseScheme(request.targetScheme)
+        val pairs = listOf(
+            LensLocalEncoder.pair("amount", LocalRouteExecutor.formatAmountDecimal(request.amount), separator),
+            LensLocalEncoder.pair("orderid", request.orderId, separator)
+        )
+        return "$scheme://refund?${LensLocalEncoder.joinPairs(pairs, separator)}"
+    }
 
     internal fun buildPayUriString(
         request: WirePaymentRequest,

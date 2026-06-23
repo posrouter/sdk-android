@@ -35,7 +35,8 @@ internal object PaymentResultDispatcher {
             PaymentClaimRegistry.releaseClaim(result.terminalId, orderId, attemptId)
         }
 
-        val deliveredLocally = PaymentAttemptRegistry.deliverCallback(result)
+        val deliveredLocally = RefundAttemptRegistry.deliverCallback(result) ||
+            PaymentAttemptRegistry.deliverCallback(result)
         if (deliveredLocally) {
             Log.i(TAG, "Payment result delivered to pay callback order=$orderId attempt=$attemptId")
         }

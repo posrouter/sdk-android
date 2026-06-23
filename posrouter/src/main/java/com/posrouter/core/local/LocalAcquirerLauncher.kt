@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.posrouter.POSRouterConfig
 import com.posrouter.WirePaymentRequest
+import com.posrouter.WireRefundRequest
 import com.posrouter.core.registry.AcquirerRouting
 
 /**
@@ -62,6 +63,34 @@ internal object LocalAcquirerLauncher {
         Log.w(TAG, "Explicit pay failed for ${routing.code}, falling back to deep link")
 
         if (LocalRouteExecutor.launchPayViaDeepLink(context, config, routing, request)) {
+            return success(routing.code, LocalLaunchMethod.DEEP_LINK)
+        }
+
+        LocalReachabilityCache.markUnreachable(routing.code)
+        return LocalLaunchResult(false)
+    }
+
+    fun launchRefund(
+        context: Context,
+        config: POSRouterConfig,
+        routing: AcquirerRouting,
+        request: WireRefundRequest
+    ): LocalLaunchResult {
+        tryCachedMethod(routing.code, cachedMethod = LocalReachabilityCache.get(routing.code).preferredMethod) {
+            when (it) {
+                LocalLaunchMethod.EXPLICIT_PACKAGE ->
+                    LocalRouteExecutor.launchRefundViaExplicitIntent(context, config, routing, request)
+                LocalLaunchMethod.DEEP_LINK ->
+                    LocalRouteExecutor.launchRefundViaDeepLink(context, config, routing, request)
+            }
+        }?.let { return it }
+
+        if (LocalRouteExecutor.launchRefundViaExplicitIntent(context, config, routing, request)) {
+            return success(routing.code, LocalLaunchMethod.EXPLICIT_PACKAGE)
+        }
+        Log.w(TAG, "Explicit refund failed for ${routing.code}, falling back to deep link")
+
+        if (LocalRouteExecutor.launchRefundViaDeepLink(context, config, routing, request)) {
             return success(routing.code, LocalLaunchMethod.DEEP_LINK)
         }
 
