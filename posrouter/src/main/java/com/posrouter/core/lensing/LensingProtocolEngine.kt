@@ -37,6 +37,7 @@ internal object LensingProtocolEngine {
     private const val MAX_BACKOFF_MS = 30_000L
     /** Suppress marking claims from our own NATS publish (subscriber echo). */
     private val ownClaimedEchoKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val subscribedResultScopes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     fun start(config: POSRouterConfig) {
         subscriptionScope = LensingSubjectScope.fromConfig(config)
@@ -139,6 +140,8 @@ internal object LensingProtocolEngine {
         }
 
         PaymentAttemptRegistry.store(request, callback)
+
+        ensureSubscriptionsForWire(request)
 
         try {
             connection.publish(targetSubject, payloadBytes)
@@ -284,7 +287,25 @@ internal object LensingProtocolEngine {
         subDispatcher.subscribe(LensingSubjects.refundSubject(subjectScope)) { msg ->
             handleIncomingRefund(String(msg.data, Charsets.UTF_8))
         }
+
+        subscribedResultScopes.add(resultScopeKey(subjectScope))
     }
+
+    /** Initiator must listen on the pay wire namespace (V1.6 subject) for remote `.result`. */
+    private fun ensureSubscriptionsForWire(wire: WirePaymentRequest) {
+        val scope = LensingSubjectScope.fromWire(wire)
+        val key = resultScopeKey(scope)
+        if (!subscribedResultScopes.add(key)) return
+        val connection = natsConnection ?: return
+        val subDispatcher = dispatcher ?: connection.createDispatcher { }.also { dispatcher = it }
+        subDispatcher.subscribe(LensingSubjects.resultSubject(scope)) { msg ->
+            handleIncomingResult(String(msg.data, Charsets.UTF_8))
+        }
+        Log.i(TAG, "Subscribed result subject for initiator scope $key")
+    }
+
+    private fun resultScopeKey(scope: LensingSubjectScope): String =
+        LensingSubjects.resultSubject(scope)
 
     private fun handleIncomingResult(json: String) {
         try {

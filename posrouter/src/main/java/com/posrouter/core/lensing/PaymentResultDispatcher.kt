@@ -30,15 +30,18 @@ internal object PaymentResultDispatcher {
 
         val orderId = result.orderId
         val attemptId = result.attemptId
-        if (orderId != null && attemptId != null) {
-            PaymentAttemptRegistry.close(result.terminalId, orderId, attemptId)
-            PaymentClaimRegistry.releaseClaim(result.terminalId, orderId, attemptId)
-        }
 
         val deliveredLocally = RefundAttemptRegistry.deliverCallback(result) ||
             PaymentAttemptRegistry.deliverCallback(result)
         if (deliveredLocally) {
             Log.i(TAG, "Payment result delivered to pay callback order=$orderId attempt=$attemptId")
+        }
+
+        if (orderId != null && attemptId != null) {
+            if (!deliveredLocally) {
+                PaymentAttemptRegistry.close(result.terminalId, orderId, attemptId)
+            }
+            PaymentClaimRegistry.releaseClaim(result.terminalId, orderId, attemptId)
         }
 
         if (publishNats) {

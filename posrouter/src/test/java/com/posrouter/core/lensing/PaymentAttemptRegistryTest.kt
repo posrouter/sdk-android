@@ -75,4 +75,34 @@ class PaymentAttemptRegistryTest {
         assertFalse(PaymentAttemptRegistry.deliverCallback(result))
         assertEquals(1, count)
     }
+
+    @Test
+    fun closeBeforeDeliverCallbackDropsInitiatorNotification() {
+        val wire = sampleWire("ORD-close-first")
+        var count = 0
+        PaymentAttemptRegistry.store(
+            wire,
+            object : com.posrouter.POSRouterCallback {
+                override fun onResult(result: com.posrouter.PaymentResult) {
+                    count++
+                }
+
+                override fun onError(error: com.posrouter.POSRouterError) = Unit
+            }
+        )
+        val result = com.posrouter.PaymentResult(
+            terminalId = "TID001",
+            orderId = "ORD-close-first",
+            attemptId = "ORD-close-first#1",
+            status = PaymentStatus.CANCELLED,
+            transactionId = null,
+            amount = 500,
+            currency = "NZD",
+            message = "CANCEL",
+            metadata = mapOf("cancelReason" to "user_cancel")
+        )
+        PaymentAttemptRegistry.close("TID001", "ORD-close-first", "ORD-close-first#1")
+        assertFalse(PaymentAttemptRegistry.deliverCallback(result))
+        assertEquals(0, count)
+    }
 }
