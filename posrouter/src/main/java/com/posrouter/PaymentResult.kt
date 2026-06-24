@@ -49,6 +49,34 @@ data class PaymentResult(
         value.replace("\\", "\\\\").replace("\"", "\\\"")
 
     companion object {
+        private fun parseMetadataObject(json: String): Map<String, String> {
+            val key = "\"metadata\""
+            val keyIndex = json.indexOf(key)
+            if (keyIndex < 0) return emptyMap()
+            val braceStart = json.indexOf('{', keyIndex + key.length)
+            if (braceStart < 0) return emptyMap()
+
+            var depth = 0
+            for (i in braceStart until json.length) {
+                when (json[i]) {
+                    '{' -> depth++
+                    '}' -> {
+                        depth--
+                        if (depth == 0) {
+                            val body = json.substring(braceStart + 1, i)
+                            val metadata = mutableMapOf<String, String>()
+                            val entryPattern = "\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"".toRegex()
+                            for (match in entryPattern.findAll(body)) {
+                                metadata[match.groupValues[1]] = match.groupValues[2]
+                            }
+                            return metadata
+                        }
+                    }
+                }
+            }
+            return emptyMap()
+        }
+
         fun fromJson(json: String): PaymentResult {
             fun extract(key: String): String? {
                 val pattern = "\"$key\"\\s*:\\s*\"([^\"]*)\"".toRegex()
@@ -69,14 +97,7 @@ data class PaymentResult(
 
             val orderId = extract("orderId") ?: extract("orderid")
 
-            val metadata = mutableMapOf<String, String>()
-            val metadataPattern = "\"metadata\"\\s*:\\s*\\{([^}]*)}".toRegex()
-            metadataPattern.find(json)?.groupValues?.getOrNull(1)?.let { body ->
-                val entryPattern = "\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"".toRegex()
-                for (match in entryPattern.findAll(body)) {
-                    metadata[match.groupValues[1]] = match.groupValues[2]
-                }
-            }
+            val metadata = parseMetadataObject(json)
 
             return PaymentResult(
                 terminalId = extract("terminalId") ?: "",
