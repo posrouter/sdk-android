@@ -19,7 +19,7 @@ import com.posrouter.core.lensing.VoidedAttemptRegistry
 import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalLaunchMethod
-import com.posrouter.core.local.LocalReachabilityCache
+import com.posrouter.core.local.RoutePreferencePolicy
 import com.posrouter.core.registry.AcquirerRegistry
 
 object POSRouter {
@@ -27,20 +27,43 @@ object POSRouter {
     fun initialize(context: Context, config: POSRouterConfig) {
         LensingContextHolder.applicationContext = context.applicationContext
         LensingContextHolder.config = config
+        LensingContextHolder.routePreference = RoutePreference.AUTO
         LensingProtocolEngine.start(config)
     }
 
-    fun connect(activity: Activity, callback: POSRouterCallback) {
+    /** Sets routing preference for [connect], [pay], and [refund]. Unknown values become [RoutePreference.AUTO]. */
+    fun setRoutePreference(routePreference: String) {
+        LensingContextHolder.routePreference = RoutePreference.normalize(routePreference)
+    }
+
+    fun getRoutePreference(): String = LensingContextHolder.routePreference
+
+    fun connect(
+        activity: Activity,
+        callback: POSRouterCallback,
+        routePreference: String? = null
+    ) {
+        routePreference?.let { setRoutePreference(it) }
         val config = requireConfig()
         val routing = AcquirerRegistry.resolve(config)
+        val preference = LensingContextHolder.routePreference
 
-        if (LocalReachabilityCache.shouldTryLocal(routing.code)) {
+        if (!RoutePreferencePolicy.skipsLocalAttempt(preference) &&
+            RoutePreferencePolicy.shouldTryLocal(preference, routing.code)
+        ) {
             val launch = LocalAcquirerLauncher.launchConnect(activity, config, routing)
             if (launch.success) {
                 val method = requireNotNull(launch.method) { "Successful local launch must include method" }
                 callback.onResult(connectResult(config, method))
                 return
             }
+        }
+
+        if (!RoutePreferencePolicy.shouldFallbackToRemote(preference)) {
+            callback.onError(
+                POSRouterError("LOCAL_ACQUIRER_UNAVAILABLE", "Local acquirer is not available on this device")
+            )
+            return
         }
 
         when (LensingProtocolEngine.currentState()) {
@@ -59,6 +82,7 @@ object POSRouter {
         val resolvedAttemptId = PaymentAttemptIdResolver.resolve(request.orderId, request.attemptId)
         val routing = AcquirerRegistry.resolve(config, request.attemptCode)
         val wire = request.toWire(config, routing, resolvedAttemptId)
+        val preference = LensingContextHolder.routePreference
 
         if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId, wire.attemptId)) {
             callback.onError(
@@ -67,7 +91,9 @@ object POSRouter {
             return
         }
 
-        if (LocalReachabilityCache.shouldTryLocal(routing.code)) {
+        if (!RoutePreferencePolicy.skipsLocalAttempt(preference) &&
+            RoutePreferencePolicy.shouldTryLocal(preference, routing.code)
+        ) {
             if (!PaymentClaimRegistry.tryAcquireClaim(wire.terminalId, wire.orderId, wire.attemptId)) {
                 callback.onError(
                     POSRouterError("ALREADY_CLAIMED", "Payment UI already claimed for order ${wire.orderId}")
@@ -86,6 +112,13 @@ object POSRouter {
             PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId, wire.attemptId)
         }
 
+        if (!RoutePreferencePolicy.shouldFallbackToRemote(preference)) {
+            callback.onError(
+                POSRouterError("LOCAL_ACQUIRER_UNAVAILABLE", "Local acquirer is not available on this device")
+            )
+            return
+        }
+
         LensingProtocolEngine.dispatchTransaction(wire, callback)
     }
 
@@ -94,13 +127,23 @@ object POSRouter {
         val resolvedAttemptId = RefundAttemptIdResolver.resolve(request.orderId, request.attemptId)
         val routing = AcquirerRegistry.resolve(config, request.attemptCode)
         val wire = request.toWire(config, routing, resolvedAttemptId)
+        val preference = LensingContextHolder.routePreference
 
-        if (LocalReachabilityCache.shouldTryLocal(routing.code)) {
+        if (!RoutePreferencePolicy.skipsLocalAttempt(preference) &&
+            RoutePreferencePolicy.shouldTryLocal(preference, routing.code)
+        ) {
             val launch = LocalAcquirerLauncher.launchRefund(activity, config, routing, wire)
             if (launch.success) {
                 RefundAttemptRegistry.store(wire, callback)
                 return
             }
+        }
+
+        if (!RoutePreferencePolicy.shouldFallbackToRemote(preference)) {
+            callback.onError(
+                POSRouterError("LOCAL_ACQUIRER_UNAVAILABLE", "Local acquirer is not available on this device")
+            )
+            return
         }
 
         LensingProtocolEngine.dispatchRefund(wire, callback)
@@ -267,4 +310,5 @@ object POSRouter {
 internal object LensingContextHolder {
     var applicationContext: Context? = null
     var config: POSRouterConfig? = null
+    var routePreference: String = RoutePreference.AUTO
 }
