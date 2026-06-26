@@ -45,6 +45,10 @@ data class PaymentRequest(
         )
 
     companion object {
+        const val METHOD_EMV_CARD = "emv_card"
+        const val METHOD_SHOW_QR_CODE = "show_qr_code"
+        const val METHOD_SKYZER = "skyzer"
+
         /** Parse a decimal amount string (e.g. "66.00") into smallest currency units (cents). */
         fun amountFromDecimal(decimal: String): Long =
             BigDecimal(decimal)

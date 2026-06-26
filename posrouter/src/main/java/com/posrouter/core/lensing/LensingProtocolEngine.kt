@@ -24,6 +24,8 @@ import kotlin.math.min
 
 internal object LensingProtocolEngine {
     private const val TAG = "POSRouter.Lensing"
+    /** Terminal-side acquirer handled outside LocalAcquirerLauncher (e.g. Skyzer Inter-App). */
+    private const val METHOD_SKYZER = "skyzer"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -466,6 +468,11 @@ internal object LensingProtocolEngine {
                 remark = wire.remark,
                 method = wire.method
             )
+
+            if (wire.method.equals(METHOD_SKYZER, ignoreCase = true)) {
+                Log.i(TAG, "Skyzer pay delegated to terminal app for order ${wire.orderId}")
+                return@launch
+            }
 
             val launch = LocalAcquirerLauncher.launchPay(context, config, routing, wire)
             if (!launch.success) {
