@@ -51,7 +51,12 @@ internal object LensingProtocolEngine {
                     config.participantKey
                 )
                 AcquirerRegistry.prefetch(config)
-                connectNats(credentials.natsUrl, credentials.natsToken, LensingSubjectScope.fromConfig(config))
+                connectNats(
+                    credentials.natsUrl,
+                    credentials.natsToken,
+                    config.participantCode,
+                    LensingSubjectScope.fromConfig(config)
+                )
             } catch (e: Exception) {
                 state = LensingState.FAILED
                 TerminalEventDispatcher.dispatchNatsState(state)
@@ -60,20 +65,25 @@ internal object LensingProtocolEngine {
         }
     }
 
-    private fun connectNats(url: String, token: String, subjectScope: LensingSubjectScope) {
+    private fun connectNats(
+        url: String,
+        token: String,
+        participantCode: String,
+        subjectScope: LensingSubjectScope
+    ) {
         subscriptionScope = subjectScope
         state = LensingState.CONNECTING
         TerminalEventDispatcher.dispatchNatsState(state)
         try {
             val options = Options.builder()
                 .server(url)
-                .token(token)
+                .userInfo(participantCode, token)
                 .connectionListener { _, type ->
                     when (type) {
                         io.nats.client.ConnectionListener.Events.DISCONNECTED -> {
                             state = LensingState.RECONNECTING
                             TerminalEventDispatcher.dispatchNatsState(state)
-                            scheduleReconnect(url, token, subjectScope)
+                            scheduleReconnect(url, token, participantCode, subjectScope)
                         }
                         io.nats.client.ConnectionListener.Events.RECONNECTED -> {
                             state = LensingState.CONNECTED
@@ -100,16 +110,21 @@ internal object LensingProtocolEngine {
         } catch (e: Exception) {
             state = LensingState.RECONNECTING
             TerminalEventDispatcher.dispatchNatsState(state)
-            scheduleReconnect(url, token, subjectScope)
+            scheduleReconnect(url, token, participantCode, subjectScope)
         }
     }
 
-    private fun scheduleReconnect(url: String, token: String, subjectScope: LensingSubjectScope) {
+    private fun scheduleReconnect(
+        url: String,
+        token: String,
+        participantCode: String,
+        subjectScope: LensingSubjectScope
+    ) {
         scope.launch {
             val delayMs = min(MAX_BACKOFF_MS, 1000L * (1 shl reconnectAttempt))
             reconnectAttempt++
             kotlinx.coroutines.delay(delayMs)
-            connectNats(url, token, subjectScope)
+            connectNats(url, token, participantCode, subjectScope)
         }
     }
 
