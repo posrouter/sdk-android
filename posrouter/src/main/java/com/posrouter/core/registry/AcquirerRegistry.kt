@@ -1,6 +1,7 @@
 package com.posrouter.core.registry
 
 import com.posrouter.POSRouterConfig
+import com.posrouter.core.lensing.GatewayEndpoints
 import com.posrouter.core.lensing.LensingDirectoryClient
 import java.util.concurrent.ConcurrentHashMap
 
@@ -31,7 +32,8 @@ internal object AcquirerRegistry {
         val routing = LensingDirectoryClient.fetchRoutingMatrix(
             acquirerCode = config.acquirerCode,
             participantCode = config.participantCode,
-            participantKey = config.participantKey
+            participantKey = config.participantKey,
+            matrixUrl = GatewayEndpoints.matrixUrl(config)
         ) ?: return
         routingCache[config.acquirerCode.uppercase()] = routing
     }

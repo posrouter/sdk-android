@@ -48,7 +48,8 @@ internal object LensingProtocolEngine {
             try {
                 val credentials = LensingGatewayClient.fetchNatsCredentials(
                     config.participantCode,
-                    config.participantKey
+                    config.participantKey,
+                    GatewayEndpoints.initUrl(config)
                 )
                 AcquirerRegistry.prefetch(config)
                 connectNats(

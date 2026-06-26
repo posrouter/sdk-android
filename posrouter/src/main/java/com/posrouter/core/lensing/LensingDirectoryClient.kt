@@ -8,17 +8,16 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 internal object LensingDirectoryClient {
-    private const val GATEWAY_MATRIX_URL = "https://lensing.starrie.org/matrix"
-
     suspend fun fetchRoutingMatrix(
         acquirerCode: String,
         participantCode: String,
-        participantKey: String
+        participantKey: String,
+        matrixUrl: String = GatewayEndpoints.DEFAULT_MATRIX_URL
     ): AcquirerRouting? = withContext(Dispatchers.IO) {
         try {
             val timestamp = System.currentTimeMillis().toString()
             val signature = LensingCrypto.computeSignature(participantKey, timestamp)
-            val url = URL("$GATEWAY_MATRIX_URL?code=${acquirerCode.uppercase()}")
+            val url = URL("$matrixUrl?code=${acquirerCode.uppercase()}")
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("X-PR-Timestamp", timestamp)

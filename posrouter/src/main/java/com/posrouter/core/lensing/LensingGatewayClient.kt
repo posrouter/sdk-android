@@ -7,14 +7,16 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 internal object LensingGatewayClient {
-    private const val GATEWAY_BASE_URL = "https://lensing.starrie.org/init"
-
-    suspend fun fetchNatsCredentials(code: String, key: String): GatewayResponse =
+    suspend fun fetchNatsCredentials(
+        code: String,
+        key: String,
+        initUrl: String = GatewayEndpoints.DEFAULT_INIT_URL
+    ): GatewayResponse =
         withContext(Dispatchers.IO) {
             val timestamp = System.currentTimeMillis().toString()
             val signature = LensingCrypto.computeSignature(key, timestamp)
 
-            val url = URL("$GATEWAY_BASE_URL?code=$code")
+            val url = URL("$initUrl?code=$code")
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("X-PR-Timestamp", timestamp)

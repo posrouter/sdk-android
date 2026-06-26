@@ -18,5 +18,11 @@ data class POSRouterConfig(
     /** Local LENS_DATA / deep-link parameter delimiter; default is Lens Protocol v2 pipe. */
     val localParamSeparator: LocalParamSeparator = LocalParamSeparator.PIPE,
     /** Applied when [PaymentRequest.method] is omitted, e.g. `emv_card` for Ezypos card-present. */
-    val defaultPayMethod: String? = null
+    val defaultPayMethod: String? = null,
+    /**
+     * Optional Gateway origin or `/init` URL for `/init` and `/matrix`.
+     * Examples: `https://lensing.posrouter.com`, `https://xxx.vercel.app/init`.
+     * When null, uses production default `https://lensing.starrie.org/init`.
+     */
+    val gatewayBaseUrl: String? = null
 )

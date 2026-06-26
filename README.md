@@ -13,6 +13,8 @@ val config = POSRouterConfig(
     merchantId = "abc123",
     callbackUrl = "gomenu://pay_result",
     currency = "NZD"
+    // Optional: override Gateway for staging / Vercel Preview
+    // gatewayBaseUrl = "https://preview.posrouter.com"
 )
 
 POSRouter.initialize(context, config)
