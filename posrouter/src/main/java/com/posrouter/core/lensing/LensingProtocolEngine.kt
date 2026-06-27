@@ -469,6 +469,11 @@ internal object LensingProtocolEngine {
                 method = wire.method
             )
 
+            if (wire.method.isNullOrBlank()) {
+                Log.i(TAG, "Pay awaiting terminal method selection for order ${wire.orderId}")
+                return@launch
+            }
+
             if (wire.method.equals(METHOD_SKYZER, ignoreCase = true)) {
                 Log.i(TAG, "Skyzer pay delegated to terminal app for order ${wire.orderId}")
                 return@launch

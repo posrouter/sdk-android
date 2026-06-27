@@ -271,6 +271,35 @@ object POSRouter {
     fun currentNatsState(): NatsConnectionState =
         LensingProtocolEngine.currentState().toNatsConnectionState()
 
+    /**
+     * Launches the local acquirer for an in-flight terminal pay (e.g. after the user picks a method).
+     * Returns false when no open attempt exists for [orderId] or the acquirer could not be opened.
+     */
+    fun launchPendingLocalPay(context: Context, orderId: String, method: String): Boolean {
+        val config = LensingContextHolder.config ?: return false
+        val wire = PaymentAttemptRegistry.lookupOpenByOrder(config.terminalId, orderId) ?: return false
+        val routing = AcquirerRegistry.resolve(config, wire.attemptCode)
+        val launch = LocalAcquirerLauncher.launchPay(
+            context,
+            config,
+            routing,
+            wire.copy(method = method)
+        )
+        if (!launch.success) {
+            PaymentAttemptRegistry.close(wire.terminalId, wire.orderId, wire.attemptId)
+            com.posrouter.core.lensing.PaymentClaimRegistry.releaseClaim(
+                wire.terminalId,
+                wire.orderId,
+                wire.attemptId
+            )
+            TerminalEventDispatcher.dispatchRemotePaymentLaunchFailed(
+                orderId,
+                "Could not launch local acquirer"
+            )
+        }
+        return launch.success
+    }
+
     private fun connectResult(config: POSRouterConfig, method: LocalLaunchMethod) = PaymentResult(
         terminalId = config.terminalId,
         status = PaymentStatus.APPROVED,
