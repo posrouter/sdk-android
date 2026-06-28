@@ -2,6 +2,7 @@ package com.posrouter.core.lensing
 
 import android.util.Log
 import com.posrouter.LensingContextHolder
+import com.posrouter.PaymentRequest
 import com.posrouter.POSRouterConfig
 import com.posrouter.WirePaymentRequest
 import com.posrouter.WireRefundRequest
@@ -469,7 +470,7 @@ internal object LensingProtocolEngine {
                 method = wire.method
             )
 
-            if (wire.method.isNullOrBlank()) {
+            if (PaymentRequest.requiresTerminalMethodSelection(wire.method)) {
                 Log.i(TAG, "Pay awaiting terminal method selection for order ${wire.orderId}")
                 return@launch
             }
