@@ -34,87 +34,121 @@ internal object LensingProtocolEngine {
     private var dispatcher: Dispatcher? = null
     private var state: LensingState = LensingState.IDLE
     private var subscriptionScope: LensingSubjectScope? = null
+    private var activeConfig: POSRouterConfig? = null
+    private var startGeneration = 0
 
     private val fallbackQueue = ConcurrentLinkedQueue<QueuedMessage>()
     private var reconnectAttempt = 0
     private const val MAX_BACKOFF_MS = 30_000L
+    private val ACTIVE_LENSING_STATES = setOf(
+        LensingState.DISCOVERING,
+        LensingState.CONNECTING,
+        LensingState.CONNECTED,
+        LensingState.RECONNECTING
+    )
     /** Suppress marking claims from our own NATS publish (subscriber echo). */
     private val ownClaimedEchoKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val subscribedResultScopes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     fun start(config: POSRouterConfig) {
+        if (activeConfig == config && state in ACTIVE_LENSING_STATES) {
+            Log.i(TAG, "start skipped — lensing already active (state=$state)")
+            return
+        }
+        activeConfig = config
+        val generation = ++startGeneration
+        shutdownConnection()
         subscriptionScope = LensingSubjectScope.fromConfig(config)
-        state = LensingState.DISCOVERING
-        TerminalEventDispatcher.dispatchNatsState(state)
+        setState(LensingState.DISCOVERING)
 
         scope.launch {
             try {
+                if (generation != startGeneration) return@launch
                 val credentials = LensingGatewayClient.fetchNatsCredentials(
                     config.participantCode,
                     config.participantKey,
                     GatewayEndpoints.initUrl(config)
                 )
+                if (generation != startGeneration) return@launch
                 AcquirerRegistry.prefetch(config)
                 connectNats(
                     credentials.natsUrl,
                     credentials.natsToken,
                     config.participantCode,
-                    LensingSubjectScope.fromConfig(config)
+                    LensingSubjectScope.fromConfig(config),
+                    generation
                 )
             } catch (e: Exception) {
-                state = LensingState.FAILED
-                TerminalEventDispatcher.dispatchNatsState(state)
+                if (generation != startGeneration) return@launch
+                setState(LensingState.FAILED)
                 Log.e(TAG, "Gateway discovery failed", e)
             }
         }
+    }
+
+    private fun setState(newState: LensingState) {
+        if (state == newState) return
+        state = newState
+        TerminalEventDispatcher.dispatchLensingState(newState)
+    }
+
+    private fun shutdownConnection() {
+        try {
+            natsConnection?.close()
+        } catch (_: Exception) {
+        }
+        natsConnection = null
+        dispatcher = null
+        subscribedResultScopes.clear()
     }
 
     private fun connectNats(
         url: String,
         token: String,
         participantCode: String,
-        subjectScope: LensingSubjectScope
+        subjectScope: LensingSubjectScope,
+        generation: Int
     ) {
+        if (generation != startGeneration) return
+        shutdownConnection()
         subscriptionScope = subjectScope
-        state = LensingState.CONNECTING
-        TerminalEventDispatcher.dispatchNatsState(state)
+        setState(LensingState.CONNECTING)
         try {
             val options = Options.builder()
                 .server(url)
                 .userInfo(participantCode, token)
                 .connectionListener { _, type ->
                     when (type) {
-                        io.nats.client.ConnectionListener.Events.DISCONNECTED -> {
-                            state = LensingState.RECONNECTING
-                            TerminalEventDispatcher.dispatchNatsState(state)
-                            scheduleReconnect(url, token, participantCode, subjectScope)
-                        }
+                        io.nats.client.ConnectionListener.Events.DISCONNECTED ->
+                            setState(LensingState.RECONNECTING)
                         io.nats.client.ConnectionListener.Events.RECONNECTED -> {
-                            state = LensingState.CONNECTED
-                            TerminalEventDispatcher.dispatchNatsState(state)
+                            setState(LensingState.CONNECTED)
                             reconnectAttempt = 0
                             flushFallbackQueue()
                         }
-                        io.nats.client.ConnectionListener.Events.CONNECTED -> {
-                            state = LensingState.CONNECTED
-                            TerminalEventDispatcher.dispatchNatsState(state)
-                        }
+                        io.nats.client.ConnectionListener.Events.CONNECTED ->
+                            setState(LensingState.CONNECTED)
                         else -> Unit
                     }
                 }
                 .build()
 
+            if (generation != startGeneration) return
             natsConnection = Nats.connect(options)
+            if (generation != startGeneration) {
+                shutdownConnection()
+                return
+            }
             dispatcher = natsConnection?.createDispatcher { }
-            state = LensingState.CONNECTED
-            TerminalEventDispatcher.dispatchNatsState(state)
+            setState(LensingState.CONNECTED)
             reconnectAttempt = 0
             setupTerminalSubscriptions(subjectScope)
             flushFallbackQueue()
         } catch (e: Exception) {
-            state = LensingState.RECONNECTING
-            TerminalEventDispatcher.dispatchNatsState(state)
-            scheduleReconnect(url, token, participantCode, subjectScope)
+            if (generation != startGeneration) return
+            Log.w(TAG, "NATS connect failed, scheduling retry", e)
+            setState(LensingState.RECONNECTING)
+            scheduleReconnect(url, token, participantCode, subjectScope, generation)
         }
     }
 
@@ -122,13 +156,15 @@ internal object LensingProtocolEngine {
         url: String,
         token: String,
         participantCode: String,
-        subjectScope: LensingSubjectScope
+        subjectScope: LensingSubjectScope,
+        generation: Int
     ) {
         scope.launch {
             val delayMs = min(MAX_BACKOFF_MS, 1000L * (1 shl reconnectAttempt))
             reconnectAttempt++
             kotlinx.coroutines.delay(delayMs)
-            connectNats(url, token, participantCode, subjectScope)
+            if (generation != startGeneration) return@launch
+            connectNats(url, token, participantCode, subjectScope, generation)
         }
     }
 

@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import com.posrouter.core.lensing.LensingProtocolEngine
 import com.posrouter.core.lensing.LensingState
+import com.posrouter.core.lensing.PendingConnectRegistry
 import com.posrouter.core.lensing.PaymentAttemptIdResolver
 import com.posrouter.core.lensing.PaymentAttemptKey
 import com.posrouter.core.lensing.PaymentAttemptRegistry
@@ -69,7 +70,7 @@ object POSRouter {
         when (LensingProtocolEngine.currentState()) {
             LensingState.CONNECTED -> callback.onResult(networkConnectResult(config))
             LensingState.DISCOVERING, LensingState.CONNECTING, LensingState.RECONNECTING ->
-                callback.onError(POSRouterError("CONNECTING", "Lensing engine still connecting"))
+                PendingConnectRegistry.enqueue(callback)
             LensingState.FAILED ->
                 callback.onError(POSRouterError("CONNECT_FAILED", "Lensing engine connection failed"))
             LensingState.IDLE ->
@@ -265,11 +266,15 @@ object POSRouter {
 
     fun setTerminalListener(listener: POSRouterTerminalListener?) {
         TerminalEventDispatcher.listener = listener
-        listener?.onNatsStateChanged(LensingProtocolEngine.currentState().toNatsConnectionState())
+        listener?.onLensingStateChanged(LensingProtocolEngine.currentState().toLensingConnectionState())
     }
 
-    fun currentNatsState(): NatsConnectionState =
-        LensingProtocolEngine.currentState().toNatsConnectionState()
+    fun currentLensingState(): LensingConnectionState =
+        LensingProtocolEngine.currentState().toLensingConnectionState()
+
+    /** Canonical ARGB color for a Lensing status indicator (see [LensingConnectionIndicator]). */
+    fun lensingIndicatorColor(state: LensingConnectionState = currentLensingState()): Int =
+        LensingConnectionIndicator.colorArgb(state)
 
     /**
      * Launches the local acquirer for an in-flight terminal pay (e.g. after the user picks a method).

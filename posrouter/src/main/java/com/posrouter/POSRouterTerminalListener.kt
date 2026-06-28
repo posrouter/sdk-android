@@ -5,7 +5,7 @@ package com.posrouter
  * Invoked on the main thread when a listener is registered via [POSRouter.setTerminalListener].
  */
 interface POSRouterTerminalListener {
-    fun onNatsStateChanged(state: NatsConnectionState) {}
+    fun onLensingStateChanged(state: LensingConnectionState) {}
 
     /** Remote pay received on NATS and about to launch the local acquirer. */
     fun onRemotePaymentReceived(

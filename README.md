@@ -27,6 +27,36 @@ POSRouter.connect(activity, callback, routePreference = RoutePreference.REMOTE_F
 POSRouter.pay(activity, PaymentRequest(...), callback)
 ```
 
+## Lensing connection status
+
+Monitor Gateway / NATS readiness for remote routing (pay, void, refund over the network).
+
+```kotlin
+POSRouter.setTerminalListener(object : POSRouterTerminalListener {
+    override fun onLensingStateChanged(state: LensingConnectionState) {
+        val color = POSRouter.lensingIndicatorColor(state)
+        // Apply to status dot (ARGB — same palette on all POSRouter apps)
+    }
+})
+
+if (POSRouter.currentLensingState() == LensingConnectionState.CONNECTED) {
+    // Safe to pay / void on remote route
+}
+```
+
+| State | Indicator color |
+|---|---|
+| `CONNECTED` | Green `#22C55E` |
+| `DISCOVERING` / `CONNECTING` / `RECONNECTING` | Amber `#F59E0B` |
+| `FAILED` | Red `#EF4444` |
+| `OFFLINE` | Slate `#94A3B8` |
+
+Full guide: [docs/integration-lensing-status.md](docs/integration-lensing-status.md)
+
+**Version scheme:** SDK `1.6.x` implements Lensing Protocol **V1.6** — see [docs/VERSIONING.md](docs/VERSIONING.md).
+
+**Upgrading from ≤ 1.0.2:** breaking rename (`NatsConnectionState` → `LensingConnectionState`, etc.) — see [docs/MIGRATION.md](docs/MIGRATION.md).
+
 ## Routing (caller-blind)
 
 1. SDK resolves `acquirerCode` via Gateway matrix (`GET /matrix?code=SUPY`) with baked defaults fallback.
