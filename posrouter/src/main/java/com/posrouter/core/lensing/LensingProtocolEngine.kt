@@ -40,6 +40,7 @@ internal object LensingProtocolEngine {
     private val fallbackQueue = ConcurrentLinkedQueue<QueuedMessage>()
     private var reconnectAttempt = 0
     private const val MAX_BACKOFF_MS = 30_000L
+    private const val MIN_BACKGROUND_FOR_RECONNECT_MS = 30_000L
     private val ACTIVE_LENSING_STATES = setOf(
         LensingState.DISCOVERING,
         LensingState.CONNECTING,
@@ -50,8 +51,8 @@ internal object LensingProtocolEngine {
     private val ownClaimedEchoKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val subscribedResultScopes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    fun start(config: POSRouterConfig) {
-        if (activeConfig == config && state in ACTIVE_LENSING_STATES) {
+    fun start(config: POSRouterConfig, force: Boolean = false) {
+        if (!force && activeConfig == config && state in ACTIVE_LENSING_STATES) {
             Log.i(TAG, "start skipped — lensing already active (state=$state)")
             return
         }
@@ -83,6 +84,35 @@ internal object LensingProtocolEngine {
                 setState(LensingState.FAILED)
                 Log.e(TAG, "Gateway discovery failed", e)
             }
+        }
+    }
+
+    fun refreshConnectionIfNeeded(force: Boolean = false, backgroundMs: Long = 0L) {
+        val config = activeConfig ?: LensingContextHolder.config ?: return
+        if (!force && !shouldRefreshConnection(backgroundMs)) return
+        Log.i(
+            TAG,
+            "refreshConnection — force=$force backgroundMs=$backgroundMs state=$state conn=${natsConnection?.status}"
+        )
+        start(config, force = true)
+    }
+
+    private fun shouldRefreshConnection(backgroundMs: Long): Boolean {
+        if (connectedButSocketDead()) return true
+        if (state == LensingState.FAILED) return true
+        if (backgroundMs >= MIN_BACKGROUND_FOR_RECONNECT_MS && state != LensingState.CONNECTED) {
+            return true
+        }
+        return false
+    }
+
+    private fun connectedButSocketDead(): Boolean {
+        if (state != LensingState.CONNECTED) return false
+        val conn = natsConnection ?: return true
+        return try {
+            conn.status != Connection.Status.CONNECTED
+        } catch (_: Exception) {
+            true
         }
     }
 

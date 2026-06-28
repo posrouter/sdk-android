@@ -47,6 +47,8 @@ class MainActivity : AppCompatActivity() {
 | `POSRouter.setTerminalListener(listener)` | Push updates on the **main thread**; fires once immediately with current state |
 | `POSRouter.currentLensingState()` | Pull current state (button clicks, `onResume`) |
 | `POSRouter.lensingIndicatorColor(state?)` | Canonical ARGB dot color (default = current state) |
+| `POSRouter.reconnectLensing()` | Force Gateway discovery + new NATS session |
+| `POSRouter.refreshLensingConnection(backgroundMs)` | Auto-reconnect after long idle or dead socket |
 | `LensingConnectionState.indicatorColorArgb()` | Same color, on the enum |
 | `LensingConnectionIndicator.colorArgb(state)` | Java-friendly static accessor |
 
@@ -86,9 +88,10 @@ If NATS is still connecting when you call `connect()`, the SDK **queues** the ca
 
 1. Call `initialize()` when config changes (terminal, merchant, participant key) — same config repeats are skipped internally.
 2. Register `setTerminalListener` after view binding; clear in `onDestroy`.
-3. Sync UI on `onResume` with `POSRouter.currentLensingState()`.
-4. Debounce rapid state changes (~300 ms) if the dot flickers during network handover.
-5. Skip UI updates when `isFinishing || isDestroyed`.
+3. On `onResume`, call `POSRouter.refreshLensingConnection(backgroundMs)` after long background (see demo / kiosk `onPause` + `SystemClock.elapsedRealtime()`).
+4. Provide a manual **Reconnect Lensing** action via `POSRouter.reconnectLensing()` when the UI is stuck Connecting.
+5. Debounce rapid state changes (~300 ms) if the dot flickers during network handover.
+6. Skip UI updates when `isFinishing || isDestroyed`.
 
 ## Terminal side (kiosk / device B)
 

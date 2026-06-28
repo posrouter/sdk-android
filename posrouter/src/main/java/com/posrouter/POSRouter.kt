@@ -277,6 +277,23 @@ object POSRouter {
         LensingConnectionIndicator.colorArgb(state)
 
     /**
+     * Re-runs Gateway discovery and opens a fresh NATS session.
+     * Use from Setup / Reconnect when the UI is stuck non-CONNECTED.
+     */
+    fun reconnectLensing() {
+        val config = LensingContextHolder.config ?: return
+        LensingProtocolEngine.start(config, force = true)
+    }
+
+    /**
+     * After returning from background, pass [backgroundMs] from [android.os.SystemClock.elapsedRealtime].
+     * Refreshes when the socket is dead while state is CONNECTED, or after long idle while not CONNECTED.
+     */
+    fun refreshLensingConnection(backgroundMs: Long = 0L) {
+        LensingProtocolEngine.refreshConnectionIfNeeded(force = false, backgroundMs = backgroundMs)
+    }
+
+    /**
      * Launches the local acquirer for an in-flight terminal pay (e.g. after the user picks a method).
      * Returns false when no open attempt exists for [orderId] or the acquirer could not be opened.
      */
