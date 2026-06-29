@@ -3,7 +3,7 @@ package com.posrouter.core.lensing
 import com.posrouter.POSRouterConfig
 
 internal object GatewayEndpoints {
-    const val DEFAULT_INIT_URL = "https://lensing.starrie.org/init"
+    const val DEFAULT_INIT_URL = "https://gateway.posrouter.com/init"
     val DEFAULT_MATRIX_URL: String
         get() = DEFAULT_INIT_URL.replace(Regex("/init$", RegexOption.IGNORE_CASE), "/matrix")
 
