@@ -200,7 +200,7 @@ object POSRouter {
     }
 
     /**
-     * Handle acquirer callback URI (e.g. gomenu://pay_result?status=SUCCESS&orderid=...&type=PAY).
+     * Handle acquirer callback URI (e.g. posrouter-kiosk://pay_result?status=SUCCESS&orderid=...&type=PAY).
      * Delivers to a pending [pay] callback on this device and publishes to NATS for remote initiators.
      */
     fun deliverAcquirerCallback(uri: Uri): PaymentResult? {
@@ -243,6 +243,38 @@ object POSRouter {
 
         PaymentResultDispatcher.deliver(result, PaymentResultSource.LOCAL_CALLBACK)
         return result
+    }
+
+    /**
+     * Parses an acquirer reverse callback without publishing or dispatching terminal events.
+     * Scheme-agnostic: any registered terminal app may use its own scheme with host [pay_result].
+     */
+    fun parseAcquirerCallback(uri: Uri): PaymentResult? {
+        val config = LensingContextHolder.config ?: return null
+        AcquirerCallbackParser.parseRefundCallback(uri, config)?.let { return it }
+        val orderId = uri.getQueryParameter("orderid")
+            ?: uri.getQueryParameter("orderId")
+            ?: return null
+        val session = PaymentAttemptRegistry.lookupOpenByOrder(config.terminalId, orderId)
+        return AcquirerCallbackParser.parsePayCallback(uri, config, session)
+    }
+
+    /**
+     * Registers a terminal-side pay attempt awaiting method selection (no acquirer launch).
+     * Used when payment is initiated via terminal deeplink (e.g. posrouter-kiosk://charge).
+     */
+    fun registerTerminalPaySelection(request: PaymentRequest): Boolean {
+        val config = requireConfig()
+        val resolvedAttemptId = PaymentAttemptIdResolver.resolve(request.orderId, request.attemptId)
+        val routing = AcquirerRegistry.resolve(config, request.attemptCode)
+        val wire = request.toWire(config, routing, resolvedAttemptId).copy(
+            method = PaymentRequest.METHOD_SELECTION
+        )
+        if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId, wire.attemptId)) {
+            return false
+        }
+        PaymentAttemptRegistry.store(wire, callback = null)
+        return true
     }
 
     /**

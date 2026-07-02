@@ -10,12 +10,16 @@ import com.posrouter.core.lensing.RefundAttemptRegistry
 
 internal object AcquirerCallbackParser {
 
+    /** Level 1: host and query are normative; scheme varies by terminal app (e.g. gomenu, posrouter-kiosk). */
+    fun isPayResultCallback(uri: Uri): Boolean =
+        uri.host.equals(PAY_RESULT_HOST, ignoreCase = true)
+
     fun parsePayCallback(
         uri: Uri,
         config: POSRouterConfig,
         session: WirePaymentRequest?
     ): PaymentResult? {
-        if (uri.scheme != "gomenu" || uri.host != "pay_result") return null
+        if (!isPayResultCallback(uri)) return null
 
         val type = uri.getQueryParameter("type")?.uppercase().orEmpty()
         if (type.isNotEmpty() && type != "PAY") return null
@@ -51,7 +55,7 @@ internal object AcquirerCallbackParser {
         uri: Uri,
         config: POSRouterConfig
     ): PaymentResult? {
-        if (uri.scheme != "gomenu" || uri.host != "pay_result") return null
+        if (!isPayResultCallback(uri)) return null
 
         val type = uri.getQueryParameter("type")?.uppercase().orEmpty()
         if (type != "REFUND") return null
@@ -93,4 +97,6 @@ internal object AcquirerCallbackParser {
         "" -> PaymentStatus.ERROR
         else -> PaymentStatus.ERROR
     }
+
+    private const val PAY_RESULT_HOST = "pay_result"
 }
