@@ -2,6 +2,7 @@ package com.posrouter.core.local
 
 import android.net.Uri
 import com.posrouter.POSRouterConfig
+import com.posrouter.PaymentCancelReason
 import com.posrouter.PaymentResult
 import com.posrouter.PaymentStatus
 import com.posrouter.WirePaymentRequest
@@ -37,17 +38,26 @@ internal object AcquirerCallbackParser {
             ?: uri.getQueryParameter("attemptId")
             ?: session?.attemptId
 
+        val message = uri.getQueryParameter("message") ?: statusRaw.ifBlank { null }
+        val cancelReasonRaw = uri.getQueryParameter("cancel_reason")
+            ?: uri.getQueryParameter("cancelReason")
+        val metadata = buildMap {
+            cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
+        }
+        val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
+
         return PaymentResult(
             terminalId = session?.terminalId ?: config.terminalId,
             orderId = orderId,
             attemptId = attemptId,
             attemptCode = session?.attemptCode,
             subMerchantId = session?.subMerchantId,
-            status = mapStatus(statusRaw),
+            status = status,
             transactionId = transactionId,
             amount = session?.amount ?: 0L,
             currency = session?.currency ?: config.currency,
-            message = uri.getQueryParameter("message") ?: statusRaw.ifBlank { null }
+            message = message,
+            metadata = metadata
         )
     }
 
@@ -93,10 +103,50 @@ internal object AcquirerCallbackParser {
     private fun mapStatus(raw: String): PaymentStatus = when (raw.uppercase()) {
         "SUCCESS", "APPROVED", "OK" -> PaymentStatus.APPROVED
         "DECLINED", "FAILED", "FAILURE", "FAIL" -> PaymentStatus.DECLINED
-        "CANCELLED", "CANCELED", "CANCEL" -> PaymentStatus.CANCELLED
+        "CANCELLED", "CANCELED", "CANCEL", "USER_CANCEL", "USERCANCEL" -> PaymentStatus.CANCELLED
         "" -> PaymentStatus.ERROR
         else -> PaymentStatus.ERROR
     }
+
+    private fun resolvePayStatus(
+        statusRaw: String,
+        cancelReasonRaw: String?,
+        message: String?
+    ): PaymentStatus {
+        val normalizedReason = cancelReasonRaw?.trim()?.lowercase().orEmpty()
+        if (normalizedReason == PaymentCancelReason.USER_CANCEL ||
+            normalizedReason == PaymentCancelReason.INITIATOR_VOID
+        ) {
+            return PaymentStatus.CANCELLED
+        }
+        val mapped = mapStatus(statusRaw)
+        if (mapped == PaymentStatus.CANCELLED) return PaymentStatus.CANCELLED
+        if (mapped != PaymentStatus.APPROVED && messageIndicatesUserCancel(message)) {
+            return PaymentStatus.CANCELLED
+        }
+        return mapped
+    }
+
+    internal fun messageIndicatesUserCancel(message: String?): Boolean {
+        val normalized = message?.trim()?.lowercase().orEmpty()
+        if (normalized.isEmpty()) return false
+        return CANCEL_MESSAGE_KEYWORDS.any { normalized.contains(it) }
+    }
+
+    private val CANCEL_MESSAGE_KEYWORDS = listOf(
+        "cancel",
+        "cancelled",
+        "canceled",
+        "user abort",
+        "aborted",
+        "trans cancel",
+        "transaction cancel",
+        "user cancel",
+        "payment cancel",
+        "操作取消",
+        "用户取消",
+        "交易取消"
+    )
 
     private const val PAY_RESULT_HOST = "pay_result"
 }
