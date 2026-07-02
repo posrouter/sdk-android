@@ -509,11 +509,6 @@ internal object LensingProtocolEngine {
         val config = LensingContextHolder.config ?: return
         val routing = AcquirerRegistry.resolve(config, wire.attemptCode)
 
-        if (!LocalReachabilityCache.shouldTryLocal(routing.code)) {
-            Log.d(TAG, "Pay received on NATS but local acquirer ${routing.code} cached unreachable")
-            return
-        }
-
         mainScope.launch {
             if (PaymentClaimRegistry.isClaimed(wire.terminalId, wire.orderId, wire.attemptId)) {
                 Log.i(TAG, "Pay aborted before launch: order ${wire.orderId} attempt ${wire.attemptId} claimed")
@@ -543,6 +538,17 @@ internal object LensingProtocolEngine {
 
             if (wire.method.equals(METHOD_SKYZER, ignoreCase = true)) {
                 Log.i(TAG, "Skyzer pay delegated to terminal app for order ${wire.orderId}")
+                return@launch
+            }
+
+            if (!LocalReachabilityCache.shouldTryLocal(routing.code)) {
+                Log.d(TAG, "Pay received on NATS but local acquirer ${routing.code} cached unreachable")
+                PaymentAttemptRegistry.close(wire.terminalId, wire.orderId, wire.attemptId)
+                PaymentClaimRegistry.releaseClaim(wire.terminalId, wire.orderId, wire.attemptId)
+                TerminalEventDispatcher.dispatchRemotePaymentLaunchFailed(
+                    wire.orderId,
+                    "Could not launch local acquirer"
+                )
                 return@launch
             }
 

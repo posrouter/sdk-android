@@ -78,7 +78,13 @@ object POSRouter {
         }
     }
 
-    fun pay(activity: Activity, request: PaymentRequest, callback: POSRouterCallback) {
+    fun pay(
+        activity: Activity,
+        request: PaymentRequest,
+        callback: POSRouterCallback,
+        routePreference: String? = null
+    ) {
+        routePreference?.let { setRoutePreference(it) }
         val config = requireConfig()
         val resolvedAttemptId = PaymentAttemptIdResolver.resolve(request.orderId, request.attemptId)
         val routing = AcquirerRegistry.resolve(config, request.attemptCode)
@@ -89,6 +95,21 @@ object POSRouter {
             callback.onError(
                 POSRouterError("ALREADY_CLAIMED", "Payment UI already claimed for order ${wire.orderId}")
             )
+            return
+        }
+
+        // Terminal method selection is rendered on a remote terminal (NATS), not a local acquirer deeplink.
+        if (PaymentRequest.requiresTerminalMethodSelection(request.method)) {
+            if (RoutePreference.normalize(preference) == RoutePreference.LOCAL_ONLY) {
+                callback.onError(
+                    POSRouterError(
+                        "LOCAL_TERMINAL_REQUIRED",
+                        "Method selection requires a remote terminal or kiosk deeplink"
+                    )
+                )
+                return
+            }
+            LensingProtocolEngine.dispatchTransaction(wire, callback)
             return
         }
 
@@ -123,7 +144,13 @@ object POSRouter {
         LensingProtocolEngine.dispatchTransaction(wire, callback)
     }
 
-    fun refund(activity: Activity, request: RefundRequest, callback: POSRouterCallback) {
+    fun refund(
+        activity: Activity,
+        request: RefundRequest,
+        callback: POSRouterCallback,
+        routePreference: String? = null
+    ) {
+        routePreference?.let { setRoutePreference(it) }
         val config = requireConfig()
         val resolvedAttemptId = RefundAttemptIdResolver.resolve(request.orderId, request.attemptId)
         val routing = AcquirerRegistry.resolve(config, request.attemptCode)
