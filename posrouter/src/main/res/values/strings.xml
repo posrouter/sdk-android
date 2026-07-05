@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="posrouter_terminal_notification_channel">POSRouter terminal</string>
+    <string name="posrouter_terminal_notification_channel_desc">Keeps the payment terminal connected for remote orders.</string>
+    <string name="posrouter_terminal_notification_title">Payment terminal</string>
+    <string name="posrouter_terminal_notification_connected">Ready for remote pay</string>
+    <string name="posrouter_terminal_notification_connecting">Connecting…</string>
+    <string name="posrouter_terminal_notification_failed">Connection failed</string>
+    <string name="posrouter_terminal_notification_idle">Starting…</string>
+</resources>

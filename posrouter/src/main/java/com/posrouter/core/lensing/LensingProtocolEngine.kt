@@ -120,6 +120,9 @@ internal object LensingProtocolEngine {
         if (state == newState) return
         state = newState
         TerminalEventDispatcher.dispatchLensingState(newState)
+        if (LensingContextHolder.config?.terminalMode == true) {
+            com.posrouter.terminal.TerminalNotificationRefresher.refresh()
+        }
     }
 
     private fun shutdownConnection() {

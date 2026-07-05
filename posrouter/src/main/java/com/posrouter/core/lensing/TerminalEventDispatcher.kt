@@ -3,9 +3,11 @@ package com.posrouter.core.lensing
 import android.os.Handler
 import android.os.Looper
 import com.posrouter.LensingConnectionState
+import com.posrouter.LensingContextHolder
 import com.posrouter.POSRouterError
 import com.posrouter.POSRouterTerminalListener
 import com.posrouter.PaymentResult
+import com.posrouter.terminal.TerminalUiCoordinator
 import com.posrouter.toLensingConnectionState
 
 internal object TerminalEventDispatcher {
@@ -38,6 +40,16 @@ internal object TerminalEventDispatcher {
         remark: String?,
         method: String?
     ) {
+        if (LensingContextHolder.config?.terminalMode == true) {
+            TerminalUiCoordinator.dispatchRemotePaymentReceived(
+                orderId,
+                amountCents,
+                currency,
+                remark,
+                method
+            )
+            return
+        }
         listener?.let { l ->
             mainHandler.post {
                 l.onRemotePaymentReceived(orderId, amountCents, currency, remark, method)

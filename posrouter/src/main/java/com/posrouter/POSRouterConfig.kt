@@ -24,5 +24,15 @@ data class POSRouterConfig(
      * Examples: `https://lensing.posrouter.com`, `https://xxx.vercel.app/init`.
      * When null, uses production default `https://lensing.starrie.org/init`.
      */
-    val gatewayBaseUrl: String? = null
+    val gatewayBaseUrl: String? = null,
+    /**
+     * B-side payment terminal: NATS runs under a foreground service and survives UI teardown.
+     * A-side integrators (GoMenu, …) leave this `false` (default).
+     */
+    val terminalMode: Boolean = false,
+    /**
+     * Fully-qualified activity class launched when a remote pay arrives while UI is inactive.
+     * Required when [terminalMode] is `true` (e.g. `com.posrouter.kiosk.KioskActivity`).
+     */
+    val terminalLaunchActivityClass: String? = null
 )

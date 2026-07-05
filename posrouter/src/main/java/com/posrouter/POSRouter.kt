@@ -2,7 +2,9 @@ package com.posrouter
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import com.posrouter.core.lensing.LensingProtocolEngine
 import com.posrouter.core.lensing.LensingState
 import com.posrouter.core.lensing.PendingConnectRegistry
@@ -22,6 +24,12 @@ import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalLaunchMethod
 import com.posrouter.core.local.RoutePreferencePolicy
 import com.posrouter.core.registry.AcquirerRegistry
+import com.posrouter.terminal.LensingTerminalService
+import com.posrouter.terminal.PendingRemotePayStore
+import com.posrouter.terminal.TerminalModeStore
+import com.posrouter.terminal.TerminalOverlayWake
+import com.posrouter.terminal.TerminalTaskRegistry
+import com.posrouter.terminal.TerminalUiForegroundTracker
 
 object POSRouter {
 
@@ -29,7 +37,16 @@ object POSRouter {
         LensingContextHolder.applicationContext = context.applicationContext
         LensingContextHolder.config = config
         LensingContextHolder.routePreference = RoutePreference.AUTO
-        LensingProtocolEngine.start(config)
+        if (config.terminalMode) {
+            require(!config.terminalLaunchActivityClass.isNullOrBlank()) {
+                "terminalLaunchActivityClass is required when terminalMode is true"
+            }
+            TerminalModeStore.setEnabled(context.applicationContext, true)
+            LensingTerminalService.start(context.applicationContext)
+        } else {
+            TerminalModeStore.setEnabled(context.applicationContext, false)
+            LensingProtocolEngine.start(config)
+        }
     }
 
     /** Sets routing preference for [connect], [pay], and [refund]. Unknown values become [RoutePreference.AUTO]. */
@@ -326,6 +343,40 @@ object POSRouter {
     fun setTerminalListener(listener: POSRouterTerminalListener?) {
         TerminalEventDispatcher.listener = listener
         listener?.onLensingStateChanged(LensingProtocolEngine.currentState().toLensingConnectionState())
+        listener?.let { PendingRemotePayStore.drain(it) }
+    }
+
+    /**
+     * B-side terminal UI visibility. Call from Activity [android.app.Activity.onStart] / [android.app.Activity.onStop]
+     * so remote pays skip alert notifications while the terminal screen is already visible.
+     */
+    fun setTerminalUiForeground(foreground: Boolean) {
+        if (LensingContextHolder.config?.terminalMode != true) return
+        TerminalUiForegroundTracker.isForeground = foreground
+    }
+
+    /**
+     * Report the terminal Activity task id (call from [android.app.Activity.onResume]) so background
+     * remote pays can [android.app.ActivityManager.moveTaskToFront] without a cold start.
+     */
+    fun reportTerminalTaskId(taskId: Int) {
+        if (LensingContextHolder.config?.terminalMode != true) return
+        TerminalTaskRegistry.taskId = taskId
+    }
+
+    /** Whether the app can start the terminal UI from background (requires Display over other apps). */
+    fun canLaunchTerminalFromBackground(context: Context): Boolean =
+        LensingContextHolder.config?.terminalMode == true &&
+            TerminalOverlayWake.isPrivileged(context.applicationContext)
+
+    /** Opens system settings for Display over other apps — required on most devices for background wake. */
+    fun openTerminalOverlayPermissionSettings(context: Context) {
+        if (LensingContextHolder.config?.terminalMode != true) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
     }
 
     fun currentLensingState(): LensingConnectionState =
