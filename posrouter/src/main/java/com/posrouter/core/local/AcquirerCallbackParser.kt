@@ -23,7 +23,7 @@ internal object AcquirerCallbackParser {
         if (!isPayResultCallback(uri)) return null
 
         val type = uri.getQueryParameter("type")?.uppercase().orEmpty()
-        if (type.isNotEmpty() && type != "PAY") return null
+        if (type.isNotEmpty() && !isPayCallbackType(type)) return null
 
         val orderId = uri.getQueryParameter("orderid")
             ?: uri.getQueryParameter("orderId")
@@ -100,7 +100,12 @@ internal object AcquirerCallbackParser {
         )
     }
 
-    private fun mapStatus(raw: String): PaymentStatus = when (raw.uppercase()) {
+    private fun isPayCallbackType(type: String): Boolean = when (type) {
+        "PAY", "CANCEL", "CANCELED", "CANCELLED" -> true
+        else -> false
+    }
+
+    private fun mapStatus(raw: String): PaymentStatus = when (raw.trim().uppercase()) {
         "SUCCESS", "APPROVED", "OK" -> PaymentStatus.APPROVED
         "DECLINED", "FAILED", "FAILURE", "FAIL" -> PaymentStatus.DECLINED
         "CANCELLED", "CANCELED", "CANCEL", "USER_CANCEL", "USERCANCEL" -> PaymentStatus.CANCELLED
