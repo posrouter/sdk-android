@@ -9,7 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.posrouter.LensingContextHolder
@@ -21,6 +23,9 @@ import com.posrouter.core.lensing.LensingState
  * Keeps Lensing / NATS alive on B-side terminal apps ([POSRouterConfig.terminalMode]).
  */
 class LensingTerminalService : Service() {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var configRetryRunnable: Runnable? = null
+    private var configRetryAttempts = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -33,19 +38,22 @@ class LensingTerminalService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val config = LensingContextHolder.config
         if (config == null) {
-            Log.w(TAG, "Terminal service started before POSRouter.initialize — stopping")
-            stopSelf()
-            return START_NOT_STICKY
+            Log.w(TAG, "Terminal service started before POSRouter.initialize — retrying")
+            scheduleConfigRetry()
+            return START_STICKY
         }
 
+        cancelConfigRetry()
+        configRetryAttempts = 0
         startInForeground()
         if (config.terminalMode) {
-            LensingProtocolEngine.start(config)
+            LensingProtocolEngine.start(config, force = true)
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        cancelConfigRetry()
         TerminalNotificationRefresher.unbind(this)
         if (instance === this) {
             instance = null
@@ -120,6 +128,34 @@ class LensingTerminalService : Service() {
             .build()
     }
 
+    private fun scheduleConfigRetry() {
+        cancelConfigRetry()
+        configRetryAttempts++
+        if (configRetryAttempts > MAX_CONFIG_RETRY_ATTEMPTS) {
+            Log.e(TAG, "POSRouter.initialize never ran — stopping terminal service")
+            stopSelf()
+            return
+        }
+        configRetryRunnable = Runnable {
+            val cfg = LensingContextHolder.config
+            if (cfg == null) {
+                scheduleConfigRetry()
+                return@Runnable
+            }
+            configRetryAttempts = 0
+            startInForeground()
+            if (cfg.terminalMode) {
+                LensingProtocolEngine.start(cfg, force = true)
+            }
+        }
+        mainHandler.postDelayed(configRetryRunnable!!, CONFIG_RETRY_DELAY_MS)
+    }
+
+    private fun cancelConfigRetry() {
+        configRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+        configRetryRunnable = null
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
@@ -139,6 +175,8 @@ class LensingTerminalService : Service() {
         private const val TAG = "POSRouter.TerminalSvc"
         private const val CHANNEL_ID = "posrouter_terminal_lensing_v2"
         private const val NOTIFICATION_ID = 7001
+        private const val CONFIG_RETRY_DELAY_MS = 2_000L
+        private const val MAX_CONFIG_RETRY_ATTEMPTS = 15
 
         @Volatile
         var running: Boolean = false

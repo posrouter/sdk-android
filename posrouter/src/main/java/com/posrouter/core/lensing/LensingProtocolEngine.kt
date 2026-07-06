@@ -81,8 +81,41 @@ internal object LensingProtocolEngine {
                 )
             } catch (e: Exception) {
                 if (generation != startGeneration) return@launch
-                setState(LensingState.FAILED)
-                Log.e(TAG, "Gateway discovery failed", e)
+                Log.e(TAG, "Gateway discovery failed, scheduling retry", e)
+                setState(LensingState.RECONNECTING)
+                scheduleGatewayRetry(config, generation)
+            }
+        }
+    }
+
+    private fun scheduleGatewayRetry(config: POSRouterConfig, generation: Int) {
+        scope.launch {
+            val delayMs = min(MAX_BACKOFF_MS, 1000L * (1 shl reconnectAttempt.coerceAtMost(5)))
+            reconnectAttempt++
+            kotlinx.coroutines.delay(delayMs)
+            if (generation != startGeneration) return@launch
+            try {
+                setState(LensingState.DISCOVERING)
+                val credentials = LensingGatewayClient.fetchNatsCredentials(
+                    config.participantCode,
+                    config.participantKey,
+                    GatewayEndpoints.initUrl(config)
+                )
+                if (generation != startGeneration) return@launch
+                AcquirerRegistry.prefetch(config)
+                reconnectAttempt = 0
+                connectNats(
+                    credentials.natsUrl,
+                    credentials.natsToken,
+                    config.participantCode,
+                    LensingSubjectScope.fromConfig(config),
+                    generation
+                )
+            } catch (e: Exception) {
+                if (generation != startGeneration) return@launch
+                Log.e(TAG, "Gateway discovery retry failed", e)
+                setState(LensingState.RECONNECTING)
+                scheduleGatewayRetry(config, generation)
             }
         }
     }
