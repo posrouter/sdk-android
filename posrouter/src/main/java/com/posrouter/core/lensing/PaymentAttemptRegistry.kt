@@ -2,6 +2,9 @@ package com.posrouter.core.lensing
 
 import android.util.Log
 import com.posrouter.POSRouterCallback
+import com.posrouter.PaymentCancelReason
+import com.posrouter.PaymentResult
+import com.posrouter.PaymentStatus
 import com.posrouter.WirePaymentRequest
 
 internal data class PaymentAttempt(
@@ -48,15 +51,25 @@ internal object PaymentAttemptRegistry {
     fun hasInitiatorCallback(wire: WirePaymentRequest): Boolean =
         hasInitiatorCallback(wire.terminalId, wire.orderId, wire.attemptId)
 
-    fun deliverCallback(result: com.posrouter.PaymentResult): Boolean {
+    fun deliverCallback(result: PaymentResult): Boolean {
         val orderId = result.orderId ?: return false
         val attemptId = result.attemptId ?: openByOrder[orderKey(result.terminalId, orderId)] ?: return false
         val storageKey = PaymentAttemptKey(result.terminalId, orderId, attemptId).storageKey()
         return attempts.remove(storageKey)?.callback?.let { callback ->
+            dispatchOptionalCancelEvents(callback, result)
             callback.onResult(result)
             openByOrder.remove(orderKey(result.terminalId, orderId), attemptId)
             true
         } ?: false
+    }
+
+    /** Optional typed cancel hooks; always followed by [POSRouterCallback.onResult]. */
+    internal fun dispatchOptionalCancelEvents(callback: POSRouterCallback, result: PaymentResult) {
+        if (result.status != PaymentStatus.CANCELLED) return
+        when (result.metadata["cancelReason"]) {
+            PaymentCancelReason.USER_CANCEL -> callback.onUserCancelled(result)
+            PaymentCancelReason.INITIATOR_VOID -> callback.onInitiatorVoided(result)
+        }
     }
 
     fun close(terminalId: String, orderId: String, attemptId: String) {
