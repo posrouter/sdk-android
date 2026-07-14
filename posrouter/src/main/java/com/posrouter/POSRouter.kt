@@ -21,6 +21,7 @@ import com.posrouter.core.lensing.TerminalEventDispatcher
 import com.posrouter.core.lensing.VoidedAttemptRegistry
 import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
+import com.posrouter.core.local.LocalKioskSelectionLauncher
 import com.posrouter.core.local.LocalLaunchMethod
 import com.posrouter.core.local.RoutePreferencePolicy
 import com.posrouter.core.registry.AcquirerRegistry
@@ -55,6 +56,17 @@ object POSRouter {
     }
 
     fun getRoutePreference(): String = LensingContextHolder.routePreference
+
+    /**
+     * Whether a same-device POSRouter Kiosk is available for [RoutePreference.LOCAL_POSROUTER_KIOSK]
+     * (package installed or `{localKioskScheme}://charge` resolvable). Never throws.
+     */
+    fun isLocalKioskAvailable(context: Context): Boolean =
+        try {
+            LocalKioskSelectionLauncher.isAvailable(context, LensingContextHolder.config)
+        } catch (_: Exception) {
+            false
+        }
 
     fun connect(
         activity: Activity,
@@ -115,13 +127,38 @@ object POSRouter {
             return
         }
 
+        // Same-device POSRouter Kiosk method picker (not local acquirer, not NATS).
+        if (RoutePreferencePolicy.isLocalPosrouterKiosk(preference)) {
+            try {
+                PaymentAttemptRegistry.store(wire.copy(method = PaymentRequest.METHOD_SELECTION), callback)
+                if (!LocalKioskSelectionLauncher.launchCharge(activity, config, wire)) {
+                    PaymentAttemptRegistry.close(wire.terminalId, wire.orderId, wire.attemptId)
+                    callback.onError(
+                        POSRouterError(
+                            "LOCAL_KIOSK_UNAVAILABLE",
+                            "POSRouter Kiosk is not installed or callbackUrl is missing"
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                PaymentAttemptRegistry.close(wire.terminalId, wire.orderId, wire.attemptId)
+                callback.onError(
+                    POSRouterError(
+                        "LOCAL_KIOSK_UNAVAILABLE",
+                        e.message ?: "Failed to launch POSRouter Kiosk"
+                    )
+                )
+            }
+            return
+        }
+
         // Terminal method selection is rendered on a remote terminal (NATS), not a local acquirer deeplink.
         if (PaymentRequest.requiresTerminalMethodSelection(request.method)) {
             if (RoutePreference.normalize(preference) == RoutePreference.LOCAL_ONLY) {
                 callback.onError(
                     POSRouterError(
                         "LOCAL_TERMINAL_REQUIRED",
-                        "Method selection requires a remote terminal or kiosk deeplink"
+                        "Method selection requires remote_only, local_posrouter_kiosk, or kiosk deeplink"
                     )
                 )
                 return
@@ -285,9 +322,23 @@ object POSRouter {
             )
         }
 
+        val hadPayCallback = session != null &&
+            PaymentAttemptRegistry.hasInitiatorCallback(
+                config.terminalId,
+                orderId,
+                session.attemptId
+            )
+
         PaymentResultDispatcher.deliver(result, PaymentResultSource.LOCAL_CALLBACK)
-        return result
+        return if (hadPayCallback) {
+            result.copy(metadata = result.metadata + (META_PAY_CALLBACK_DELIVERED to "1"))
+        } else {
+            result
+        }
     }
+
+    /** Present on [deliverAcquirerCallback] return value when a pending [pay] callback was invoked. */
+    const val META_PAY_CALLBACK_DELIVERED = "payCallbackDelivered"
 
     /**
      * Parses an acquirer reverse callback without publishing or dispatching terminal events.

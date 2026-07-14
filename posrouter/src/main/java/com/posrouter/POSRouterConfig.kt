@@ -34,5 +34,10 @@ data class POSRouterConfig(
      * Fully-qualified activity class launched when a remote pay arrives while UI is inactive.
      * Required when [terminalMode] is `true` (e.g. `com.posrouter.kiosk.KioskActivity`).
      */
-    val terminalLaunchActivityClass: String? = null
+    val terminalLaunchActivityClass: String? = null,
+    /**
+     * Deeplink scheme for [RoutePreference.LOCAL_POSROUTER_KIOSK] charges
+     * (default `posrouter-kiosk` → `posrouter-kiosk://charge`).
+     */
+    val localKioskScheme: String? = null
 )

@@ -28,12 +28,17 @@ class RoutePreferenceTest {
     fun normalizeAcceptsHyphenAndCaseVariants() {
         assertEquals(RoutePreference.REMOTE_FIRST, RoutePreference.normalize("Remote-First"))
         assertEquals(RoutePreference.LOCAL_ONLY, RoutePreference.normalize("LOCAL-ONLY"))
+        assertEquals(
+            RoutePreference.LOCAL_POSROUTER_KIOSK,
+            RoutePreference.normalize("Local-Posrouter-Kiosk")
+        )
     }
 
     @Test
     fun policySkipsLocalForRemoteModes() {
         assertTrue(RoutePreferencePolicy.skipsLocalAttempt(RoutePreference.REMOTE_FIRST))
         assertTrue(RoutePreferencePolicy.skipsLocalAttempt(RoutePreference.REMOTE_ONLY))
+        assertTrue(RoutePreferencePolicy.skipsLocalAttempt(RoutePreference.LOCAL_POSROUTER_KIOSK))
         assertFalse(RoutePreferencePolicy.skipsLocalAttempt(RoutePreference.AUTO))
     }
 
@@ -47,8 +52,16 @@ class RoutePreferenceTest {
     @Test
     fun policyLocalOnlyDoesNotFallbackToRemote() {
         assertFalse(RoutePreferencePolicy.shouldFallbackToRemote(RoutePreference.LOCAL_ONLY))
+        assertFalse(RoutePreferencePolicy.shouldFallbackToRemote(RoutePreference.LOCAL_POSROUTER_KIOSK))
         assertTrue(RoutePreferencePolicy.shouldFallbackToRemote(RoutePreference.AUTO))
         assertTrue(RoutePreferencePolicy.shouldFallbackToRemote(RoutePreference.LOCAL_FIRST))
+    }
+
+    @Test
+    fun policyLocalPosrouterKioskIsDedicatedMode() {
+        assertTrue(RoutePreferencePolicy.isLocalPosrouterKiosk(RoutePreference.LOCAL_POSROUTER_KIOSK))
+        assertFalse(RoutePreferencePolicy.shouldTryLocal(RoutePreference.LOCAL_POSROUTER_KIOSK, "SUPY"))
+        assertFalse(RoutePreferencePolicy.isLocalPosrouterKiosk(RoutePreference.LOCAL_ONLY))
     }
 
     @Test
