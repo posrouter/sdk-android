@@ -78,6 +78,21 @@ object POSRouter {
         val routing = AcquirerRegistry.resolve(config)
         val preference = LensingContextHolder.routePreference
 
+        // Same-device POSRouter Kiosk: probe only (do not launch charge UI). Distinct from local acquirer.
+        if (RoutePreferencePolicy.isLocalPosrouterKiosk(preference)) {
+            if (isLocalKioskAvailable(activity)) {
+                callback.onResult(localKioskConnectResult(config))
+            } else {
+                callback.onError(
+                    POSRouterError(
+                        "LOCAL_KIOSK_UNAVAILABLE",
+                        "POSRouter Kiosk is not installed on this device"
+                    )
+                )
+            }
+            return
+        }
+
         if (!RoutePreferencePolicy.skipsLocalAttempt(preference) &&
             RoutePreferencePolicy.shouldTryLocal(preference, routing.code)
         ) {
@@ -491,6 +506,16 @@ object POSRouter {
         currency = config.currency,
         message = localLaunchMessage(method, "connect"),
         localRouteMethod = method.toPublicRouteMethod()
+    )
+
+    private fun localKioskConnectResult(config: POSRouterConfig) = PaymentResult(
+        terminalId = config.terminalId,
+        status = PaymentStatus.APPROVED,
+        transactionId = null,
+        amount = 0,
+        currency = config.currency,
+        message = "POSRouter Kiosk available for local_posrouter_kiosk",
+        localRouteMethod = LocalRouteMethod.DEEP_LINK
     )
 
     private fun networkConnectResult(config: POSRouterConfig) = PaymentResult(

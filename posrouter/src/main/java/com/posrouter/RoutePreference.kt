@@ -13,6 +13,7 @@ object RoutePreference {
     /**
      * Same-device POSRouter Kiosk method picker via `posrouter-kiosk://charge`
      * (not local acquirer card/QR, not NATS).
+     * [POSRouter.connect] probes install/resolvability only; [POSRouter.pay] launches charge.
      */
     const val LOCAL_POSROUTER_KIOSK = "local_posrouter_kiosk"
 
