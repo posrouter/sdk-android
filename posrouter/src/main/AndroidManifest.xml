@@ -9,6 +9,24 @@
     <!-- Granted via Settings → Display over other apps; exempts background Activity starts (API 29+). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!--
+      Merged into host apps (GoMenu, etc.). Without these, Android 11+ hides the kiosk from
+      getPackageInfo / resolveActivity, so local_posrouter_kiosk looks "not installed"
+      even when it is (demo works only because it declared the same queries itself).
+    -->
+    <queries>
+        <package android:name="com.posrouter.kiosk" />
+        <package android:name="ezypay.com.globe.cardpos" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="posrouter-kiosk" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="ezypos" />
+        </intent>
+    </queries>
+
     <application>
         <service
             android:name=".terminal.LensingTerminalService"

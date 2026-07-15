@@ -23,11 +23,13 @@ import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalKioskSelectionLauncher
 import com.posrouter.core.local.LocalLaunchMethod
+import com.posrouter.core.local.PendingLocalKioskConnectRegistry
 import com.posrouter.core.local.RoutePreferencePolicy
 import com.posrouter.core.registry.AcquirerRegistry
 import com.posrouter.terminal.LensingTerminalService
 import com.posrouter.terminal.PendingRemotePayStore
 import com.posrouter.terminal.TerminalModeStore
+import java.util.Locale
 import com.posrouter.terminal.TerminalOverlayWake
 import com.posrouter.terminal.TerminalTaskRegistry
 import com.posrouter.terminal.TerminalUiForegroundTracker
@@ -78,18 +80,44 @@ object POSRouter {
         val routing = AcquirerRegistry.resolve(config)
         val preference = LensingContextHolder.routePreference
 
-        // Same-device POSRouter Kiosk: probe only (do not launch charge UI). Distinct from local acquirer.
+        // Same-device POSRouter Kiosk: launch connect handshake (relay type=CONNECT).
+        // Partner UIs that wait for the reverse deeplink (GoMenu) need this — probe-only never confirms.
         if (RoutePreferencePolicy.isLocalPosrouterKiosk(preference)) {
-            if (isLocalKioskAvailable(activity)) {
-                callback.onResult(localKioskConnectResult(config))
-            } else {
+            if (!isLocalKioskAvailable(activity)) {
                 callback.onError(
                     POSRouterError(
                         "LOCAL_KIOSK_UNAVAILABLE",
-                        "POSRouter Kiosk is not installed on this device"
+                        "POSRouter Kiosk not visible to this app " +
+                            "(not installed, or Android 11+ missing <queries> for " +
+                            "com.posrouter.kiosk / posrouter-kiosk)"
                     )
                 )
+                return
             }
+            val callbackUrl = config.callbackUrl?.trim().orEmpty()
+            if (callbackUrl.isEmpty()) {
+                callback.onError(
+                    POSRouterError(
+                        "MISSING_CALLBACK_URL",
+                        "local_posrouter_kiosk connect requires POSRouterConfig.callbackUrl " +
+                            "(e.g. gomenu://pay_result) so the kiosk can relay type=CONNECT"
+                    )
+                )
+                return
+            }
+            PendingLocalKioskConnectRegistry.enqueue(callback)
+            if (!LocalKioskSelectionLauncher.launchConnect(activity, config, notifyConnect = true)) {
+                PendingLocalKioskConnectRegistry.clear()
+                callback.onError(
+                    POSRouterError(
+                        "LOCAL_KIOSK_UNAVAILABLE",
+                        "Failed to launch POSRouter Kiosk connect"
+                    )
+                )
+                return
+            }
+            // Do not onResult here — wait for kiosk relay via deliverAcquirerCallback(type=CONNECT)
+            // (same waiting pattern GoMenu uses for local activate).
             return
         }
 
@@ -296,11 +324,17 @@ object POSRouter {
     }
 
     /**
-     * Handle acquirer callback URI (e.g. posrouter-kiosk://pay_result?status=SUCCESS&orderid=...&type=PAY).
-     * Delivers to a pending [pay] callback on this device and publishes to NATS for remote initiators.
+     * Handle acquirer / kiosk reverse callback URI
+     * (e.g. gomenu://pay_result?type=CONNECT&status=SUCCESS or …&type=PAY&…).
+     * Delivers to a pending [pay]/[connect] callback on this device and publishes to NATS for remote initiators.
      */
     fun deliverAcquirerCallback(uri: Uri): PaymentResult? {
         val config = LensingContextHolder.config ?: return null
+
+        val type = uri.getQueryParameter("type")?.uppercase(Locale.US).orEmpty()
+        if (type == "CONNECT") {
+            return completeLocalKioskConnect(uri, config)
+        }
 
         AcquirerCallbackParser.parseRefundCallback(uri, config)?.let { parsed ->
             val enriched = parsed.copy(
@@ -514,9 +548,36 @@ object POSRouter {
         transactionId = null,
         amount = 0,
         currency = config.currency,
-        message = "POSRouter Kiosk available for local_posrouter_kiosk",
+        message = "POSRouter Kiosk connect confirmed",
         localRouteMethod = LocalRouteMethod.DEEP_LINK
     )
+
+    private fun completeLocalKioskConnect(uri: Uri, config: POSRouterConfig): PaymentResult? {
+        val status = uri.getQueryParameter("status")?.trim()?.uppercase(Locale.US).orEmpty()
+        val ok = status == "SUCCESS" || status == "APPROVED" || status == "OK"
+        if (ok) {
+            val result = localKioskConnectResult(config)
+            if (!PendingLocalKioskConnectRegistry.completeSuccess(result)) {
+                // No pending POSRouter.connect — host handled CONNECT UI-only (still OK).
+                return result
+            }
+            return result
+        }
+        val error = POSRouterError(
+            "CONNECT_FAILED",
+            "POSRouter Kiosk connect failed — status=${status.ifBlank { "empty" }}"
+        )
+        PendingLocalKioskConnectRegistry.completeError(error)
+        return PaymentResult(
+            terminalId = config.terminalId,
+            status = PaymentStatus.DECLINED,
+            transactionId = null,
+            amount = 0,
+            currency = config.currency,
+            message = error.message,
+            localRouteMethod = LocalRouteMethod.DEEP_LINK
+        )
+    }
 
     private fun networkConnectResult(config: POSRouterConfig) = PaymentResult(
         terminalId = config.terminalId,
