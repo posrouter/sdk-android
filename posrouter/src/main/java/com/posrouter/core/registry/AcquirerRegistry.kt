@@ -16,7 +16,14 @@ internal object AcquirerRegistry {
     fun resolve(config: POSRouterConfig, attemptCode: String? = null): AcquirerRouting {
         val code = (attemptCode ?: config.acquirerCode).uppercase()
         val overridePackage = config.acquirerPackageOverride
-        if (!overridePackage.isNullOrBlank() && attemptCode.isNullOrBlank()) {
+        // The terminal's package/scheme override targets the PRIMARY acquirer. Honor it when there is no
+        // explicit attemptCode (first try) or when the attemptCode still names the configured acquirer —
+        // the terminal launch re-resolves with the resolved code (e.g. "SUPY"), and without this it would
+        // fall through to the baked default package and mismatch the overridden scheme. A genuine
+        // cross-acquirer retry (attemptCode != acquirerCode, e.g. SKYZER fallback) still bypasses it.
+        if (!overridePackage.isNullOrBlank() &&
+            (attemptCode.isNullOrBlank() || attemptCode.equals(config.acquirerCode, ignoreCase = true))
+        ) {
             return AcquirerRouting(
                 code = code,
                 packageName = overridePackage,
