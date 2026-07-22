@@ -36,14 +36,16 @@ When the spec moves to **V1.7**, the next SDK line starts at **1.7.0** (even if 
 |---|---|
 | **1.0.0 – 1.0.2** | Early partner builds; **not** spec-aligned numbering |
 | **1.6.3** | First release under this scheme; includes Lensing status API rename + `lensingIndicatorColor()` |
+| **1.6.4** | Local POSRouter Kiosk connect handshake + package-visibility `<queries>`; cancel/result relay hardening for partners |
+| **1.6.5** | Patch line for partner TMS / AAR republish |
 
-Partners on **≤ 1.0.2** should treat **1.6.3** as the upgrade target (see [MIGRATION.md](MIGRATION.md)). The interim label `1.0.3` was never published.
+Partners on **≤ 1.0.2** should treat **1.6.3+** as the upgrade target (see [MIGRATION.md](MIGRATION.md)); current publish line is **1.6.5**. The interim label `1.0.3` was never published.
 
 ## Where the version is set
 
 ```properties
 # sdk-android/gradle.properties
-POSROUTER_VERSION=1.6.3
+POSROUTER_VERSION=1.6.5
 ```
 
 Publish:
@@ -55,7 +57,7 @@ Publish:
 Partners:
 
 ```kotlin
-implementation("com.posrouter:posrouter:1.6.3")
+implementation("com.posrouter:posrouter:1.6.5")
 ```
 
 ## Spec reference in code

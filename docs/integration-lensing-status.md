@@ -103,4 +103,4 @@ Same listener works on the payment terminal. Also implement:
 
 ## Migration from ≤ 1.0.2
 
-See [MIGRATION.md](MIGRATION.md) for `NatsConnectionState` → `LensingConnectionState` rename. Upgrade target: **1.6.3+**.
+See [MIGRATION.md](MIGRATION.md) for `NatsConnectionState` → `LensingConnectionState` rename. Upgrade target: **1.6.5+**.

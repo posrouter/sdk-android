@@ -18,7 +18,7 @@ Unchanged: `POSRouter.initialize()`, `connect()`, `pay()`, `refund()`, `setTermi
 
 ### Upgrade steps
 
-1. Replace `posrouter-release.aar` **or** bump Maven dependency to **`1.6.3+`**.
+1. Replace `posrouter-release.aar` **or** bump Maven dependency to **`1.6.5+`** (first spec-aligned line was **1.6.3**).
 2. Project-wide search-and-replace the three symbols above.
 3. Rebuild and smoke-test: initialize → wait for green indicator → pay / void on remote route.
 
