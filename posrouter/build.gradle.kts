@@ -6,7 +6,10 @@ plugins {
     id("maven-publish")
 }
 
-group = "com.posrouter"
+// JitPack builds set JITPACK=true; multi-module artifacts must be published under
+// com.github.<org>.<repo> so consumers resolve com.github.posrouter.sdk-android:posrouter:<tag>.
+// Every other build (local, GitHub Packages) keeps the com.posrouter coordinate.
+group = if (System.getenv("JITPACK").toBoolean()) "com.github.posrouter.sdk-android" else "com.posrouter"
 version = providers.gradleProperty("POSROUTER_VERSION").getOrElse("1.0.0")
 
 val localProperties = Properties().apply {
@@ -58,7 +61,7 @@ afterEvaluate {
     publishing {
         publications {
             create<MavenPublication>("release") {
-                groupId = "com.posrouter"
+                groupId = project.group.toString()
                 artifactId = "posrouter"
                 version = project.version.toString()
 

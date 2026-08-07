@@ -2,6 +2,32 @@
 
 Pure Kotlin native Android library for the Lensing Protocol. Callers only need their own code (GPOS) and the partner registry code (SUPY).
 
+## Install (JitPack — public, no token)
+
+In `settings.gradle.kts` add the JitPack repository:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+```
+
+In your app module `build.gradle.kts`:
+
+```kotlin
+implementation("com.github.posrouter.sdk-android:posrouter:1.6.5")
+```
+
+No account or token required — the repo is public and JitPack builds it on first request.
+See [releases](https://github.com/posrouter/sdk-android/releases) for the latest version.
+
+> Internal/CI consumers can also pull `com.posrouter:posrouter:<version>` from GitHub Packages
+> (requires a GitHub token) — see [Publish to Maven](#publish-to-maven-github-packages) below.
+
 ## Usage
 
 ```kotlin
