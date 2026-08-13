@@ -56,7 +56,7 @@ Add the dependency (pin the exact version we give you):
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.posrouter.sdk-android:posrouter:1.6.5")
+    implementation("com.github.posrouter:sdk-android:1.6.5")
 }
 ```
 
