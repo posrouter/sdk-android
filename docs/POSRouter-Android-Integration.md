@@ -34,56 +34,49 @@ authenticates your app to the payment network.
 - **minSdk 24** (Android 7.0) or higher.
 - Kotlin or Java. Examples below are Kotlin.
 
-## 3. Install the SDK
+## 3. Install the SDK (Gradle via JitPack)
 
-The SDK ships as `com.posrouter:posrouter`. We give you access one of two ways — use
-whichever you received.
+The SDK is distributed through **JitPack** from the public `posrouter/sdk-android` repo —
+**no account, token, or manual file needed.**
 
-### Option A — AAR (no GitHub access needed)
-
-We send you `posrouter-release.aar`. Drop it into your app's `libs/` and add:
-
-```kotlin
-// app/build.gradle.kts
-dependencies {
-    implementation(files("libs/posrouter-release.aar"))
-    // The SDK's runtime deps (we tell you the exact versions):
-    implementation("io.nats:jnats:<version>")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:<version>")
-}
-```
-
-### Option B — Maven (GitHub Packages)
-
-The SDK is published to a **private** registry. You need a GitHub account we've granted
-access to `posrouter/sdk-android`, and a Personal Access Token (classic) with
-`read:packages`.
+Add the JitPack repository:
 
 ```kotlin
 // settings.gradle.kts
 dependencyResolutionManagement {
     repositories {
         google(); mavenCentral()
-        maven {
-            url = uri("https://maven.pkg.github.com/posrouter/sdk-android")
-            credentials {
-                username = providers.gradleProperty("gpr.user").get()
-                password = providers.gradleProperty("gpr.key").get()   // your PAT
-            }
-        }
+        maven { url = uri("https://jitpack.io") }
     }
 }
 ```
 
+Add the dependency (pin the exact version we give you):
+
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.posrouter:posrouter:1.6.5")   // pin the version we give you
+    implementation("com.github.posrouter.sdk-android:posrouter:1.6.5")
 }
 ```
 
-Put `gpr.user` / `gpr.key` in your **`local.properties`** (not in git). The POM pulls in
-`jnats` and `kotlinx-coroutines` transitively — no need to declare them.
+The published POM pulls in `jnats` and `kotlinx-coroutines` transitively — no need to
+declare them. The first build of a new version compiles on JitPack's servers and may take a
+minute; after that it's cached.
+
+### Offline alternative — AAR
+
+If your build can't reach JitPack, ask us for `posrouter-release.aar`, drop it in `libs/`,
+and declare the runtime deps yourself:
+
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation(files("libs/posrouter-release.aar"))
+    implementation("io.nats:jnats:<version>")                                    // versions we give you
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:<version>")
+}
+```
 
 ```kotlin
 import com.posrouter.POSRouter
