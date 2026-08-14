@@ -8,6 +8,9 @@ import com.posrouter.PaymentStatus
 import com.posrouter.WirePaymentRequest
 import com.posrouter.core.lensing.RefundAttemptIdResolver
 import com.posrouter.core.lensing.RefundAttemptRegistry
+import org.json.JSONObject
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 internal object AcquirerCallbackParser {
 
@@ -41,8 +44,13 @@ internal object AcquirerCallbackParser {
         val message = uri.getQueryParameter("message") ?: statusRaw.ifBlank { null }
         val cancelReasonRaw = uri.getQueryParameter("cancel_reason")
             ?: uri.getQueryParameter("cancelReason")
+        // On SUCCESS the acquirer app returns the full order object as the `order` param. It carries the
+        // charged total (inclusive of any surcharge the terminal added) and the surcharge itself — the
+        // requested `session.amount` does not, so trust the returned total when present.
+        val orderAmounts = parseEzyposOrderAmounts(uri.getQueryParameter("order"))
         val metadata = buildMap {
             cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
+            orderAmounts?.surchargeCents?.let { put("surcharge", it.toString()) }
         }
         val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
 
@@ -54,11 +62,44 @@ internal object AcquirerCallbackParser {
             subMerchantId = session?.subMerchantId,
             status = status,
             transactionId = transactionId,
-            amount = session?.amount ?: 0L,
+            amount = orderAmounts?.totalCents?.takeIf { it > 0 } ?: session?.amount ?: 0L,
             currency = session?.currency ?: config.currency,
             message = message,
             metadata = metadata
         )
+    }
+
+    /** Total (inclusive) and surcharge, in minor units, pulled from the acquirer's returned order JSON. */
+    private data class EzyposOrderAmounts(val totalCents: Long?, val surchargeCents: Long?)
+
+    /**
+     * The `order` callback param is the acquirer order object serialised as JSON. `total_amount_minor`
+     * is the charged total in cents; `total_amount` / `surcharge` are decimal-dollar strings. Surcharge
+     * is only reported when actually applied (`retail_surcharge`), so a bare/zero value is dropped.
+     */
+    private fun parseEzyposOrderAmounts(orderJson: String?): EzyposOrderAmounts? {
+        if (orderJson.isNullOrBlank()) return null
+        return try {
+            val obj = JSONObject(orderJson)
+            val totalCents = obj.optLong("total_amount_minor", -1L)
+                .takeIf { it > 0 }
+                ?: decimalToMinor(obj.optString("total_amount"))
+            val surchargeCents = decimalToMinor(obj.optString("surcharge"))
+                ?.takeIf { it > 0 && obj.optBoolean("retail_surcharge", true) }
+            EzyposOrderAmounts(totalCents, surchargeCents)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun decimalToMinor(value: String?): Long? {
+        val trimmed = value?.trim().orEmpty()
+        if (trimmed.isEmpty()) return null
+        return try {
+            BigDecimal(trimmed).multiply(BigDecimal(100)).setScale(0, RoundingMode.HALF_UP).longValueExact()
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun parseRefundCallback(
