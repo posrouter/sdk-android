@@ -47,10 +47,12 @@ internal object AcquirerCallbackParser {
         // On SUCCESS the acquirer app returns the full order object as the `order` param. It carries the
         // charged total (inclusive of any surcharge the terminal added) and the surcharge itself — the
         // requested `session.amount` does not, so trust the returned total when present.
-        val orderAmounts = parseEzyposOrderAmounts(uri.getQueryParameter("order"))
+        val orderJson = uri.getQueryParameter("order")
+        val orderAmounts = parseEzyposOrderAmounts(orderJson)
         val metadata = buildMap {
             cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
             orderAmounts?.surchargeCents?.let { put("surcharge", it.toString()) }
+            putAll(parseEzyposCardDetails(orderJson, uri.getQueryParameter(PARAM_CARD_NUMBER)))
         }
         val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
 
@@ -90,6 +92,60 @@ internal object AcquirerCallbackParser {
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * Card details the acquirer reports for an EMV/card sale, so the terminal can print a standard EFTPOS
+     * slip instead of a bare amount. Everything here is optional: a QR / wallet sale carries none of it,
+     * and the receipt simply omits what is absent — no field is ever synthesised.
+     *
+     * The PAN is deliberately reduced to its last four digits **here, at the boundary**, and the full value
+     * is never copied into [PaymentResult]: metadata is published over Lensing and forwarded to the back
+     * office, so a full PAN entering it would spread cardholder data well past this process.
+     */
+    private fun parseEzyposCardDetails(orderJson: String?, cardNumberParam: String?): Map<String, String> {
+        val obj = orderJson?.takeIf { it.isNotBlank() }?.let {
+            try {
+                JSONObject(it)
+            } catch (e: Exception) {
+                null
+            }
+        }
+        fun field(name: String): String? =
+            obj?.optString(name)?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+
+        return buildMap {
+            field("card_scheme")?.let { put("cardScheme", it.uppercase()) }
+            lastFourDigits(field("card_number") ?: cardNumberParam)?.let { put("cardLast4", it) }
+            field("card_pan_entry_mode")?.let { put("cardEntryMode", it.uppercase()) }
+            // EMV tag 50 (application label) comes over as hex; decode so the receipt shows "Visa DEBIT"
+            // rather than "56697361204445424954".
+            field("card_app_label")?.let { put("cardAppLabel", decodeHexAscii(it) ?: it) }
+            field("card_aid")?.let { put("cardAid", it.uppercase()) }
+            field("card_pan_seq_no")?.let { put("cardPanSeqNo", it) }
+            field("auth_code")?.let { put("authCode", it) }
+        }
+    }
+
+    /** The last four PAN digits, ignoring the masking characters the acquirer pads the value with. */
+    private fun lastFourDigits(pan: String?): String? {
+        val digits = pan?.filter { it.isDigit() }.orEmpty()
+        return digits.takeIf { it.length >= 4 }?.takeLast(4)
+    }
+
+    /** Hex-encoded ASCII → text, or null when [value] is not printable hex (then it is used as-is). */
+    private fun decodeHexAscii(value: String): String? {
+        if (value.length < 2 || value.length % 2 != 0) return null
+        if (!value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) return null
+        val decoded = buildString {
+            for (i in value.indices step 2) {
+                val code = value.substring(i, i + 2).toInt(16)
+                // Printable ASCII only: anything else means this was not a text label after all.
+                if (code < 0x20 || code > 0x7E) return null
+                append(code.toChar())
+            }
+        }
+        return decoded.trim().takeIf { it.isNotEmpty() }
     }
 
     private fun decimalToMinor(value: String?): Long? {
@@ -195,4 +251,7 @@ internal object AcquirerCallbackParser {
     )
 
     private const val PAY_RESULT_HOST = "pay_result"
+
+    /** Acquirer callback param carrying the PAN; only its last four digits are ever kept. */
+    private const val PARAM_CARD_NUMBER = "card_number"
 }
