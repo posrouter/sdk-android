@@ -115,28 +115,43 @@ internal object AcquirerCallbackParser {
             obj?.optString(name)?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
 
         return buildMap {
-            field("card_scheme")?.let { put("cardScheme", it.uppercase()) }
-            lastFourDigits(field("card_number") ?: cardNumberParam)?.let { put("cardLast4", it) }
-            field("card_pan_entry_mode")?.let { put("cardEntryMode", it.uppercase()) }
-            // EMV tag 50 (application label) comes over as hex; decode so the receipt shows "Visa DEBIT"
-            // rather than "56697361204445424954".
-            field("card_app_label")?.let { put("cardAppLabel", decodeHexAscii(it) ?: it) }
-            field("card_aid")?.let { put("cardAid", it.uppercase()) }
-            field("card_pan_seq_no")?.let { put("cardPanSeqNo", it) }
-            field("auth_code")?.let { put("authCode", it) }
+            // Each value is capped: it crosses a trust boundary from a third-party app straight into
+            // metadata that is published and forwarded, and none of these fields is ever long.
+            fun expose(key: String, value: String?) {
+                value?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_CARD_FIELD_LENGTH }
+                    ?.let { put(key, it) }
+            }
+            expose("cardScheme", field("card_scheme")?.uppercase())
+            expose("cardLast4", lastFourDigits(field("card_number") ?: cardNumberParam))
+            expose("cardEntryMode", field("card_pan_entry_mode")?.uppercase())
+            expose("cardAppLabel", field("card_app_label")?.let { applicationLabel(it) })
+            expose("cardAid", field("card_aid")?.uppercase())
+            expose("cardPanSeqNo", field("card_pan_seq_no"))
+            expose("authCode", field("auth_code"))
         }
     }
 
     /** The last four PAN digits, ignoring the masking characters the acquirer pads the value with. */
     private fun lastFourDigits(pan: String?): String? {
-        val digits = pan?.filter { it.isDigit() }.orEmpty()
+        val digits = pan?.filter { it in '0'..'9' }.orEmpty()
         return digits.takeIf { it.length >= 4 }?.takeLast(4)
     }
 
-    /** Hex-encoded ASCII → text, or null when [value] is not printable hex (then it is used as-is). */
+    /**
+     * The EMV tag 50 application label as text. The acquirer sends it hex-encoded, so hex-shaped input is
+     * decoded — and dropped if it does not decode to something printable, because a value that was meant
+     * to be hex but is not readable text is garbage, and garbage must not reach a receipt. Input that was
+     * never hex-shaped is already a plain label and is used as-is.
+     */
+    private fun applicationLabel(raw: String): String? =
+        if (isHexShaped(raw)) decodeHexAscii(raw) else raw
+
+    private fun isHexShaped(value: String): Boolean =
+        value.length >= 2 && value.length % 2 == 0 &&
+            value.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+    /** Hex-encoded printable ASCII → text, or null when it does not decode to printable text. */
     private fun decodeHexAscii(value: String): String? {
-        if (value.length < 2 || value.length % 2 != 0) return null
-        if (!value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) return null
         val decoded = buildString {
             for (i in value.indices step 2) {
                 val code = value.substring(i, i + 2).toInt(16)
@@ -254,4 +269,11 @@ internal object AcquirerCallbackParser {
 
     /** Acquirer callback param carrying the PAN; only its last four digits are ever kept. */
     private const val PARAM_CARD_NUMBER = "card_number"
+
+    /**
+     * Longest card field accepted from the acquirer. These values cross a trust boundary from a
+     * third-party app into metadata that is published and forwarded, and the real ones are short — the
+     * longest, a 16-byte AID, is 32 hex characters.
+     */
+    private const val MAX_CARD_FIELD_LENGTH = 64
 }
