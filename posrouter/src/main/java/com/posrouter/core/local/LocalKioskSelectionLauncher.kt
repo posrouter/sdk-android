@@ -64,6 +64,7 @@ internal object LocalKioskSelectionLauncher {
         val uri = Uri.parse("$scheme://$HOST_CONNECT").buildUpon()
             .appendQueryParameter("callback_url", callbackUrl)
             .appendQueryParameter("kiosk_lock", "0")
+            .appendQueryParameter("caller_package", activity.packageName)
             .apply {
                 if (!notifyConnect) appendQueryParameter("notify", "0")
             }
@@ -95,6 +96,7 @@ internal object LocalKioskSelectionLauncher {
             .appendQueryParameter("orderid", wire.orderId)
             .appendQueryParameter("method", PaymentRequest.METHOD_SELECTION)
             .appendQueryParameter("callback_url", callbackUrl)
+            .appendQueryParameter("caller_package", activity.packageName)
             .apply {
                 if (partnerScheme.isNotEmpty()) {
                     appendQueryParameter("partner_scheme", partnerScheme)
@@ -111,6 +113,16 @@ internal object LocalKioskSelectionLauncher {
         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
             addCategory(Intent.CATEGORY_DEFAULT)
             addCategory(Intent.CATEGORY_BROWSABLE)
+            // NEW_TASK is what the Level 1 spec's launch snippet shows, and leaving it off is not a
+            // cosmetic difference: the kiosk activity is singleTop, so without it a second kiosk
+            // instance is created *inside this app's task*. When that instance later hands the
+            // screen back it backgrounds the task it is sharing with us, taking this POS app down
+            // with it, and the terminal's standby screen is what staff end up looking at.
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Names this app on the deeplink itself. getReferrer() cannot: a warm deeplink arrives
+            // at the kiosk's onNewIntent, where the referrer still describes whoever launched it
+            // originally, and the terminal is always already running.
+            putExtra(Intent.EXTRA_REFERRER, Uri.parse("android-app://${activity.packageName}"))
         }
         if (intent.resolveActivity(activity.packageManager) == null) {
             Log.e(TAG, "No activity resolves $label")
