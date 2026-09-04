@@ -497,11 +497,13 @@ internal object LensingProtocolEngine {
 
         mainScope.launch {
             TerminalEventDispatcher.dispatchRemotePaymentReceived(
-                orderId = wire.orderId,
-                amountCents = wire.amount,
-                currency = wire.currency,
-                remark = "Refund",
-                method = null
+                com.posrouter.RemotePaymentRequest(
+                    orderId = wire.orderId,
+                    amountCents = wire.amount,
+                    currency = wire.currency,
+                    remark = "Refund",
+                    method = null
+                )
             )
 
             val launch = LocalAcquirerLauncher.launchRefund(context, config, routing, wire)
@@ -560,11 +562,14 @@ internal object LensingProtocolEngine {
             PaymentAttemptRegistry.store(wire, callback = null)
 
             TerminalEventDispatcher.dispatchRemotePaymentReceived(
-                orderId = wire.orderId,
-                amountCents = wire.amount,
-                currency = wire.currency,
-                remark = wire.remark,
-                method = wire.method
+                com.posrouter.RemotePaymentRequest(
+                    orderId = wire.orderId,
+                    amountCents = wire.amount,
+                    currency = wire.currency,
+                    remark = wire.remark,
+                    method = wire.method,
+                    metadata = wire.metadata
+                )
             )
 
             if (PaymentRequest.requiresTerminalMethodSelection(wire.method)) {

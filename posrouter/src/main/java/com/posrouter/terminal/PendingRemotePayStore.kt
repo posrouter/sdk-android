@@ -1,45 +1,32 @@
 package com.posrouter.terminal
 
 import com.posrouter.POSRouterTerminalListener
+import com.posrouter.RemotePaymentRequest
 
+/**
+ * Holds a remote pay that arrived before any terminal UI was bound, so it is delivered once the
+ * listener appears instead of being dropped. Keeps the whole [RemotePaymentRequest] — including the
+ * initiator's metadata — because a queued order must arrive with the same instructions a live one
+ * would have carried.
+ */
 internal object PendingRemotePayStore {
 
-    data class Snapshot(
-        val orderId: String,
-        val amountCents: Long,
-        val currency: String,
-        val remark: String?,
-        val method: String?
-    )
-
     @Volatile
-    private var pending: Snapshot? = null
+    private var pending: RemotePaymentRequest? = null
 
-    fun store(
-        orderId: String,
-        amountCents: Long,
-        currency: String,
-        remark: String?,
-        method: String?
-    ) {
-        pending = Snapshot(orderId, amountCents, currency, remark, method)
+    fun store(request: RemotePaymentRequest) {
+        pending = request
     }
 
-    fun peek(): Snapshot? = pending
+    fun peek(): RemotePaymentRequest? = pending
 
     fun clear() {
         pending = null
     }
 
     fun drain(listener: POSRouterTerminalListener) {
-        val snapshot = pending ?: return
+        val request = pending ?: return
         pending = null
-        listener.onRemotePaymentReceived(
-            orderId = snapshot.orderId,
-            amountCents = snapshot.amountCents,
-            currency = snapshot.currency,
-            remark = snapshot.remark,
-            method = snapshot.method
-        )
+        listener.onRemotePaymentReceived(request)
     }
 }

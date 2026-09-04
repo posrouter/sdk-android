@@ -16,6 +16,22 @@ interface POSRouterTerminalListener {
         method: String?
     ) {}
 
+    /**
+     * Same event as the five-argument form, with the initiator's [RemotePaymentRequest.metadata]
+     * intact. The SDK calls this one; the default body forwards to the older signature so existing
+     * implementations keep working untouched. Override this instead to read metadata-carried
+     * instructions such as [RemotePaymentRequest.returnTo].
+     */
+    fun onRemotePaymentReceived(request: RemotePaymentRequest) {
+        onRemotePaymentReceived(
+            request.orderId,
+            request.amountCents,
+            request.currency,
+            request.remark,
+            request.method
+        )
+    }
+
     fun onRemotePaymentLaunchFailed(orderId: String, message: String) {}
 
     /** Acquirer callback processed (local device completed or cancelled the payment UI). */

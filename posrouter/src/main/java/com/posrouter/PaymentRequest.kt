@@ -130,6 +130,15 @@ internal data class WirePaymentRequest(
                 ?: extract("acquirerCode")
                 ?: ""
             val merchantId = extract("merchantId") ?: return null
+            // metadata was serialised outbound but dropped here, so anything an initiator attached
+            // to an order never reached the terminal. Parsed with a real JSON reader because the
+            // regexes above cannot see into a nested object; a payload that is not strict JSON
+            // still yields every other field, just with no metadata.
+            val metadata = runCatching {
+                val obj = org.json.JSONObject(json).optJSONObject("metadata")
+                    ?: return@runCatching emptyMap<String, String>()
+                obj.keys().asSequence().associateWith { obj.optString(it) }
+            }.getOrDefault(emptyMap())
 
             return WirePaymentRequest(
                 terminalId = terminalId,
@@ -144,7 +153,8 @@ internal data class WirePaymentRequest(
                 attemptCode = attemptCode,
                 remark = extract("remark"),
                 method = extract("method"),
-                subMerchantId = extract("subMerchantId")
+                subMerchantId = extract("subMerchantId"),
+                metadata = metadata
             )
         }
     }

@@ -33,27 +33,13 @@ internal object TerminalEventDispatcher {
         }
     }
 
-    fun dispatchRemotePaymentReceived(
-        orderId: String,
-        amountCents: Long,
-        currency: String,
-        remark: String?,
-        method: String?
-    ) {
+    fun dispatchRemotePaymentReceived(request: com.posrouter.RemotePaymentRequest) {
         if (LensingContextHolder.config?.terminalMode == true) {
-            TerminalUiCoordinator.dispatchRemotePaymentReceived(
-                orderId,
-                amountCents,
-                currency,
-                remark,
-                method
-            )
+            TerminalUiCoordinator.dispatchRemotePaymentReceived(request)
             return
         }
         listener?.let { l ->
-            mainHandler.post {
-                l.onRemotePaymentReceived(orderId, amountCents, currency, remark, method)
-            }
+            mainHandler.post { l.onRemotePaymentReceived(request) }
         }
     }
 

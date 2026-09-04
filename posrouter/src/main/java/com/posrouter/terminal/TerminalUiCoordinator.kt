@@ -17,28 +17,21 @@ internal object TerminalUiCoordinator {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun dispatchRemotePaymentReceived(
-        orderId: String,
-        amountCents: Long,
-        currency: String,
-        remark: String?,
-        method: String?
+        request: com.posrouter.RemotePaymentRequest
     ) {
+        val orderId = request.orderId
         val listener = TerminalEventDispatcher.listener
         val inForeground = TerminalUiForegroundTracker.isForeground
 
         if (inForeground && listener != null) {
-            mainHandler.post {
-                listener.onRemotePaymentReceived(orderId, amountCents, currency, remark, method)
-            }
+            mainHandler.post { listener.onRemotePaymentReceived(request) }
             return
         }
 
         if (listener != null) {
-            mainHandler.post {
-                listener.onRemotePaymentReceived(orderId, amountCents, currency, remark, method)
-            }
+            mainHandler.post { listener.onRemotePaymentReceived(request) }
         } else {
-            PendingRemotePayStore.store(orderId, amountCents, currency, remark, method)
+            PendingRemotePayStore.store(request)
             Log.i(TAG, "Remote pay queued until terminal UI binds — order=$orderId")
         }
 
@@ -47,10 +40,10 @@ internal object TerminalUiCoordinator {
         TerminalLaunchIntents.launch(
             context = requireContext(),
             orderId = orderId,
-            amountCents = amountCents,
-            currency = currency,
-            remark = remark,
-            method = method
+            amountCents = request.amountCents,
+            currency = request.currency,
+            remark = request.remark,
+            method = request.method
         )
     }
 
