@@ -78,12 +78,24 @@ internal object TerminalLaunchIntents {
         )
     }
 
+    /**
+     * Brings the terminal's own task forward for an incoming remote order.
+     *
+     * Deliberately no MOVE_TASK_WITH_HOME. That flag parks the launcher immediately behind the task
+     * it moves, which decides what the operator sees when the terminal steps aside once the order is
+     * done: with it, the answer is always the desktop, even though the app the order interrupted —
+     * the POS that is waiting on this payment — was the thing on screen a moment earlier. Without
+     * it, the stack keeps its own order and receding uncovers whoever was actually there.
+     *
+     * It went unnoticed for as long as it did because a terminal set as the device Home *is* the
+     * home task, so the flag had nothing separate to reposition.
+     */
     private fun moveTerminalTaskToFront(context: Context): Boolean {
         val taskId = TerminalTaskRegistry.taskId
         if (taskId <= 0) return false
         val manager = context.getSystemService(ActivityManager::class.java) ?: return false
         return try {
-            manager.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME)
+            manager.moveTaskToFront(taskId, 0)
             true
         } catch (e: Exception) {
             Log.w(TAG, "moveTaskToFront failed taskId=$taskId", e)
