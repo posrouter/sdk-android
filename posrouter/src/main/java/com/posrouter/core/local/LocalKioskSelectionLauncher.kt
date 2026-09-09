@@ -94,7 +94,9 @@ internal object LocalKioskSelectionLauncher {
             .appendQueryParameter("amount", wire.amount.toString())
             .appendQueryParameter("currency", wire.currency.ifBlank { config.currency })
             .appendQueryParameter("orderid", wire.orderId)
-            .appendQueryParameter("method", PaymentRequest.METHOD_SELECTION)
+            // Forward the caller's concrete method (emv_card / skyzer / show_qr_code) so the Kiosk can
+            // auto-launch that acquirer instead of showing its picker; blank/selection → picker.
+            .appendQueryParameter("method", wire.method?.takeIf { it.isNotBlank() } ?: PaymentRequest.METHOD_SELECTION)
             .appendQueryParameter("callback_url", callbackUrl)
             .appendQueryParameter("caller_package", activity.packageName)
             .apply {
