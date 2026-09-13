@@ -158,6 +158,38 @@ val cents = PaymentRequest.amountFromDecimal("12.50")  // 1250
 // throws on "abc", "12,50", overflow, and sub-cent precision like "1.005"
 ```
 
+### Payment method
+
+`PaymentRequest.method` chooses how the terminal takes the payment. **Omit it (or pass
+`selection`) to let the terminal show its own method picker**; pass a concrete value to go
+straight to that method:
+
+| `method` | Terminal behaviour |
+|---|---|
+| *(omitted)* / `METHOD_SELECTION` | Terminal renders its method picker (card / EFTPOS / QR …). |
+| `METHOD_EMV_CARD` | Contact / contactless bank card (the usual card-present default). |
+| `METHOD_SKYZER` | EFTPOS / UnionPay via the Skyzer terminal app. |
+| `METHOD_SHOW_QR_CODE` | Customer-presented QR (WeChat Pay / Alipay). |
+
+```kotlin
+PaymentRequest(
+    terminalId = "TID001", amount = 1250, orderId = "ORDER-9",
+    method = PaymentRequest.METHOD_SELECTION,   // let the terminal choose; or a concrete method
+)
+```
+
+Constants live on `PaymentRequest` (`METHOD_EMV_CARD`, `METHOD_SKYZER`, `METHOD_SHOW_QR_CODE`,
+`METHOD_SELECTION`). When `method` is omitted, the config's `defaultPayMethod` applies.
+
+> **Method selection needs a terminal that renders a picker.** Omitting `method` (or passing
+> `METHOD_SELECTION`) works with `REMOTE_ONLY` and `LOCAL_POSROUTER_KIOSK` (§10). A direct
+> same-device acquirer launch (`LOCAL_ONLY`) can't show a picker, so pass a concrete method
+> there.
+
+**Optional advanced `PaymentRequest` fields:** `metadata` (`Map<String,String>` carried
+end-to-end and echoed back on the result), `subMerchantId` (platform sub-merchant on the
+lane), and `attemptCode` (override the acquirer pipeline for this one try, e.g. `SKYZER`).
+
 ## 7. Void an in-flight payment
 
 Soft-void a payment you just started (before it settles). Resolves as a `CANCELLED` result
@@ -220,6 +252,7 @@ POSRouter.pay(activity, request, callback, routePreference = RoutePreference.REM
 | `REMOTE_ONLY` | always the remote terminal (network) |
 | `LOCAL_ONLY` | same-device acquirer only |
 | `LOCAL_FIRST` / `REMOTE_FIRST` | try one, fall back to the other |
+| `LOCAL_POSROUTER_KIOSK` | hand off to a same-device POSRouter Kiosk (`posrouter-kiosk://charge`) that renders the method picker — not a direct acquirer launch, not NATS. Required for on-device method selection (§6). |
 
 ## 11. Local track only — forward the acquirer callback
 
@@ -251,7 +284,12 @@ Register your `callbackUrl` scheme with an intent-filter on that Activity in you
 | `orderId` / `attemptId` | `String?` | your order id + the SDK's per-try id |
 | `transactionId` | `String?` | acquirer transaction reference (on approval) |
 | `message` | `String?` | human-readable detail |
-| `metadata` | `Map<String,String>` | extra fields, e.g. `cancelReason` (`user_cancel` vs `initiator_void`) |
+| `metadata` | `Map<String,String>` | extra fields (see below) |
+
+`metadata` carries `cancelReason` (`user_cancel` vs `initiator_void`) on a cancel, and — when
+the acquirer reports them — `surcharge` and `tip` (minor units, as strings) plus card details
+`cardScheme`, `cardLast4`, `cardEntryMode`, `authCode` (and, if present, `cardAppLabel`,
+`cardAid`, `cardPanSeqNo`). All are optional; a key is present only when the terminal returns it.
 
 ## 13. Error codes (`POSRouterError.code`)
 
