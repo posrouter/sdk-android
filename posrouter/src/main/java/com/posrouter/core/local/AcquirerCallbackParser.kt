@@ -52,6 +52,10 @@ internal object AcquirerCallbackParser {
         val metadata = buildMap {
             cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
             orderAmounts?.surchargeCents?.let { put("surcharge", it.toString()) }
+            // Kiosk relay (local_posrouter_kiosk) hands the result back over a bare pay_result deeplink
+            // with the card details as query params rather than an acquirer order JSON — parse those first
+            // so a direct acquirer order JSON, when present, still overrides them.
+            putAll(parseCardDetailsFromQuery(uri))
             putAll(parseEzyposCardDetails(orderJson, uri.getQueryParameter(PARAM_CARD_NUMBER)))
         }
         val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
@@ -264,6 +268,32 @@ internal object AcquirerCallbackParser {
         "用户取消",
         "交易取消"
     )
+
+    /**
+     * Card/payment-method metadata keys the kiosk relay forwards as query params (see
+     * KioskDeeplinks.buildPartnerPayResultUri) and that [parseCardDetailsFromQuery] reads back. Kept in
+     * step with the keys [parseEzyposCardDetails] produces so both callback shapes yield the same metadata.
+     */
+    private val FORWARDED_CARD_KEYS = listOf(
+        "cardScheme", "cardLast4", "cardEntryMode", "cardAppLabel",
+        "cardAid", "cardPanSeqNo", "authCode", "surcharge", "provider",
+        // EMV kernel result forwarded by the acquirer on failure/cancel (no order JSON to carry it),
+        // so a recognition failure still leaves its reason in metadata → CRM.
+        "emvResultCode", "emvResultDesc"
+    )
+
+    /**
+     * Card details forwarded as query params by the kiosk relay, which has no acquirer order JSON to
+     * carry them. Each value is capped like the order-JSON path: it crosses a trust boundary into
+     * metadata that is published and forwarded, and every real value here is short.
+     */
+    private fun parseCardDetailsFromQuery(uri: Uri): Map<String, String> = buildMap {
+        for (key in FORWARDED_CARD_KEYS) {
+            uri.getQueryParameter(key)?.trim()
+                ?.takeIf { it.isNotEmpty() && it.length <= MAX_CARD_FIELD_LENGTH }
+                ?.let { put(key, it) }
+        }
+    }
 
     private const val PAY_RESULT_HOST = "pay_result"
 
