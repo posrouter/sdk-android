@@ -10,17 +10,20 @@ import android.util.Log
 import com.posrouter.POSRouterConfig
 import com.posrouter.PaymentRequest
 import com.posrouter.WirePaymentRequest
+import com.posrouter.WireRefundRequest
 
 /**
  * Same-device POSRouter Kiosk deeplinks:
  * - `{scheme}://connect` — partner register + optional CONNECT relay
  * - `{scheme}://charge` — method selection
+ * - `{scheme}://refund` — refund of a prior sale (Kiosk routes Skyzer over Inter-App, ezypos over the acquirer)
  */
 internal object LocalKioskSelectionLauncher {
     private const val TAG = "POSRouter.LocalKiosk"
     const val DEFAULT_SCHEME = "posrouter-kiosk"
     const val HOST_CONNECT = "connect"
     const val HOST_CHARGE = "charge"
+    const val HOST_REFUND = "refund"
     /** Default kiosk application id (explicit Intent / install probe). */
     const val DEFAULT_PACKAGE = "com.posrouter.kiosk"
 
@@ -109,6 +112,49 @@ internal object LocalKioskSelectionLauncher {
             .build()
 
         return startViewIntent(activity, uri, "$scheme://$HOST_CHARGE")
+    }
+
+    /**
+     * Opens the Kiosk refund surface for a prior sale. Mirrors [launchCharge]: forwards amount,
+     * currency, orderid, the original sale's `method` (so the Kiosk routes Skyzer over Inter-App and
+     * ezypos over the acquirer refund deeplink), and the `callback_url` the Kiosk relays the result
+     * back on with `type=REFUND` — which [com.posrouter.POSRouter.deliverAcquirerCallback] then feeds
+     * to the refund callback stored in RefundAttemptRegistry.
+     */
+    fun launchRefund(
+        activity: Activity,
+        config: POSRouterConfig,
+        wire: WireRefundRequest
+    ): Boolean {
+        val callbackUrl = config.callbackUrl?.trim()?.takeIf { it.isNotEmpty() }
+        if (callbackUrl == null) {
+            Log.e(TAG, "local_posrouter_kiosk refund requires POSRouterConfig.callbackUrl")
+            return false
+        }
+        if (!isAvailable(activity, config)) {
+            Log.e(TAG, "POSRouter Kiosk not available on this device")
+            return false
+        }
+
+        val scheme = resolveScheme(config)
+        val partnerScheme = Uri.parse(callbackUrl).scheme?.trim().orEmpty()
+        val uri = Uri.parse("$scheme://$HOST_REFUND").buildUpon()
+            .appendQueryParameter("amount", wire.amount.toString())
+            .appendQueryParameter("currency", wire.currency.ifBlank { config.currency })
+            .appendQueryParameter("orderid", wire.orderId)
+            .appendQueryParameter("callback_url", callbackUrl)
+            .appendQueryParameter("caller_package", activity.packageName)
+            .apply {
+                // Hint the channel; the Kiosk prefers the recorded sale's own route and falls back to this.
+                wire.method?.takeIf { it.isNotBlank() }?.let { appendQueryParameter("method", it) }
+                if (partnerScheme.isNotEmpty()) {
+                    appendQueryParameter("partner_scheme", partnerScheme)
+                }
+                wire.attemptId.takeIf { it.isNotBlank() }?.let { appendQueryParameter("attemptid", it) }
+            }
+            .build()
+
+        return startViewIntent(activity, uri, "$scheme://$HOST_REFUND")
     }
 
     private fun startViewIntent(activity: Activity, uri: Uri, label: String): Boolean {

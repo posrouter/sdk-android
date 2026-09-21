@@ -254,6 +254,35 @@ object POSRouter {
         val wire = request.toWire(config, routing, resolvedAttemptId)
         val preference = LensingContextHolder.routePreference
 
+        // Same-device POSRouter Kiosk (the route pos-client uses): the Kiosk owns every acquirer,
+        // including Skyzer over Inter-App, so the refund is delegated to it exactly like a charge.
+        // Without this branch a local_posrouter_kiosk refund skipped the local attempt AND could not
+        // fall back to remote (shouldFallbackToRemote=false) → it errored LOCAL_ACQUIRER_UNAVAILABLE
+        // and no refund, Skyzer or ezypos, ever reached the terminal.
+        if (RoutePreferencePolicy.isLocalPosrouterKiosk(preference)) {
+            try {
+                RefundAttemptRegistry.store(wire, callback)
+                if (!LocalKioskSelectionLauncher.launchRefund(activity, config, wire)) {
+                    RefundAttemptRegistry.close(wire)
+                    callback.onError(
+                        POSRouterError(
+                            "LOCAL_KIOSK_UNAVAILABLE",
+                            "POSRouter Kiosk is not installed or callbackUrl is missing"
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                RefundAttemptRegistry.close(wire)
+                callback.onError(
+                    POSRouterError(
+                        "LOCAL_KIOSK_UNAVAILABLE",
+                        e.message ?: "Failed to launch POSRouter Kiosk refund"
+                    )
+                )
+            }
+            return
+        }
+
         if (!RoutePreferencePolicy.skipsLocalAttempt(preference) &&
             RoutePreferencePolicy.shouldTryLocal(preference, routing.code)
         ) {

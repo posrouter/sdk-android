@@ -17,7 +17,15 @@ data class RefundRequest(
     val amount: Long,
     val attemptId: String? = null,
     val attemptCode: String? = null,
-    val subMerchantId: String? = null
+    val subMerchantId: String? = null,
+    /**
+     * Concrete acquirer method the original sale was taken with (e.g. [PaymentRequest.METHOD_SKYZER],
+     * [PaymentRequest.METHOD_EMV_CARD]). Only meaningful on the local_posrouter_kiosk route, where it
+     * is forwarded to the Kiosk so a Skyzer sale is refunded over Skyzer's Inter-App and an ezypos
+     * sale over the acquirer's own refund deeplink — the refund cannot resolve the channel from
+     * [attemptCode] alone the way a fresh pay can. Null → the Kiosk routes from the sale it recorded.
+     */
+    val method: String? = null
 ) {
     internal fun toWire(
         config: POSRouterConfig,
@@ -35,7 +43,8 @@ data class RefundRequest(
             merchantId = config.merchantId,
             attemptId = resolvedAttemptId,
             attemptCode = routing.code,
-            subMerchantId = subMerchantId
+            subMerchantId = subMerchantId,
+            method = method
         )
 
     companion object {
@@ -58,7 +67,9 @@ internal data class WireRefundRequest(
     val merchantId: String,
     val attemptId: String,
     val attemptCode: String,
-    val subMerchantId: String? = null
+    val subMerchantId: String? = null,
+    /** Concrete acquirer method of the original sale; forwarded to the local Kiosk refund deeplink. */
+    val method: String? = null
 ) {
     fun subjectScope(): LensingSubjectScope = LensingSubjectScope(
         acquirerCode = acquirerCode,
@@ -81,6 +92,7 @@ internal data class WireRefundRequest(
             """"merchantId":"${escapeJson(merchantId)}""""
         )
         subMerchantId?.let { fields.add(""""subMerchantId":"${escapeJson(it)}"""") }
+        method?.takeIf { it.isNotBlank() }?.let { fields.add(""""method":"${escapeJson(it)}"""") }
         return "{${fields.joinToString(",")}}"
     }
 
@@ -119,7 +131,8 @@ internal data class WireRefundRequest(
                 merchantId = merchantId,
                 attemptId = attemptId,
                 attemptCode = attemptCode,
-                subMerchantId = extract("subMerchantId")
+                subMerchantId = extract("subMerchantId"),
+                method = extract("method")
             )
         }
     }
