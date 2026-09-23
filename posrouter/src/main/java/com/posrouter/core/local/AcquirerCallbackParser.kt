@@ -80,8 +80,14 @@ internal object AcquirerCallbackParser {
 
     /**
      * The `order` callback param is the acquirer order object serialised as JSON. `total_amount_minor`
-     * is the charged total in cents; `total_amount` / `surcharge` are decimal-dollar strings. Surcharge
-     * is only reported when actually applied (`retail_surcharge`), so a bare/zero value is dropped.
+     * is the charged total in cents; `total_amount` / `display_amount` are decimal-dollar strings —
+     * the charged total (surcharge included) and the base sale respectively.
+     *
+     * The acquirer does NOT send a surcharge of its own: there is no `surcharge` field on the wire (nor
+     * `total_amount_minor` / `retail_surcharge`) — confirmed against a live callback. The surcharge is
+     * the difference `total_amount − display_amount`, and deriving it here is the only place it is
+     * expressed. An explicit `surcharge` field is still honoured first, so a future build that starts
+     * sending one is used as-is rather than recomputed.
      */
     private fun parseEzyposOrderAmounts(orderJson: String?): EzyposOrderAmounts? {
         if (orderJson.isNullOrBlank()) return null
@@ -90,8 +96,11 @@ internal object AcquirerCallbackParser {
             val totalCents = obj.optLong("total_amount_minor", -1L)
                 .takeIf { it > 0 }
                 ?: decimalToMinor(obj.optString("total_amount"))
+            val displayCents = decimalToMinor(obj.optString("display_amount"))
             val surchargeCents = decimalToMinor(obj.optString("surcharge"))
                 ?.takeIf { it > 0 && obj.optBoolean("retail_surcharge", true) }
+                ?: if (totalCents != null && displayCents != null && totalCents > displayCents)
+                    totalCents - displayCents else null
             EzyposOrderAmounts(totalCents, surchargeCents)
         } catch (e: Exception) {
             null
