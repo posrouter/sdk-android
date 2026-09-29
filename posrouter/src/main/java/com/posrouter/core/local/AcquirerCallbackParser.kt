@@ -57,6 +57,9 @@ internal object AcquirerCallbackParser {
             // so a direct acquirer order JSON, when present, still overrides them.
             putAll(parseCardDetailsFromQuery(uri))
             putAll(parseEzyposCardDetails(orderJson, uri.getQueryParameter(PARAM_CARD_NUMBER)))
+            // A QR / wallet sale carries no card_* fields; its payment method is the acquirer `channel`
+            // (WeChat / Alipay). Without this the wallet sale reached the CRM with no method at all.
+            putAll(parseEzyposWallet(orderJson))
         }
         val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
 
@@ -141,6 +144,36 @@ internal object AcquirerCallbackParser {
             expose("cardAid", field("card_aid")?.uppercase())
             expose("cardPanSeqNo", field("card_pan_seq_no"))
             expose("authCode", field("auth_code"))
+        }
+    }
+
+    /**
+     * The wallet payment method the acquirer reports for a QR sale (WeChat / Alipay). A card sale carries
+     * `card_*` fields; a wallet sale instead carries the acquirer `channel` (e.g. "Wechat" /
+     * "AlipayOnline") and none of the card fields, so without this it reached the back office with no
+     * payment method at all. `walletType` is set to the value the CRM already stores for these channels
+     * (WECHAT_RETAIL / ALIPAY_CN_ONLINE) so classification stays consistent; `channel` is passed through
+     * as the brand. A card channel matches neither and sets only `channel` (its scheme is card_scheme).
+     */
+    private fun parseEzyposWallet(orderJson: String?): Map<String, String> {
+        val obj = orderJson?.takeIf { it.isNotBlank() }?.let {
+            try {
+                JSONObject(it)
+            } catch (e: Exception) {
+                null
+            }
+        } ?: return emptyMap()
+        val channel = obj.optString("channel").trim()
+            .takeIf {
+                it.isNotEmpty() && !it.equals("null", ignoreCase = true) && it.length <= MAX_CARD_FIELD_LENGTH
+            } ?: return emptyMap()
+        val lc = channel.lowercase()
+        return buildMap {
+            put("channel", channel)
+            when {
+                lc.contains("wechat") || lc.contains("weixin") -> put("walletType", "WECHAT_RETAIL")
+                lc.contains("alipay") -> put("walletType", "ALIPAY_CN_ONLINE")
+            }
         }
     }
 
@@ -286,6 +319,8 @@ internal object AcquirerCallbackParser {
     private val FORWARDED_CARD_KEYS = listOf(
         "cardScheme", "cardLast4", "cardEntryMode", "cardAppLabel",
         "cardAid", "cardPanSeqNo", "authCode", "surcharge", "provider",
+        // Wallet (QR) payment method, so the kiosk-relay shape carries it like the order-JSON shape.
+        "channel", "walletType",
         // EMV kernel result forwarded by the acquirer on failure/cancel (no order JSON to carry it),
         // so a recognition failure still leaves its reason in metadata → CRM.
         "emvResultCode", "emvResultDesc"
