@@ -144,6 +144,11 @@ internal object AcquirerCallbackParser {
             expose("cardAid", field("card_aid")?.uppercase())
             expose("cardPanSeqNo", field("card_pan_seq_no"))
             expose("authCode", field("auth_code"))
+            // debit vs credit. The acquirer promotes card_scheme to the top level but keeps card_class
+            // inside the nested `ext_params` JSON string, so without reading there the sale reached the
+            // back office with a scheme (VISA) but no class and could not be priced. Prefer a top-level
+            // field if a future build hoists it; fall back to ext_params.
+            expose("cardClass", (field("card_class") ?: extParam(obj, "card_class"))?.uppercase())
         }
     }
 
@@ -174,6 +179,22 @@ internal object AcquirerCallbackParser {
                 lc.contains("wechat") || lc.contains("weixin") -> put("walletType", "WECHAT_RETAIL")
                 lc.contains("alipay") -> put("walletType", "ALIPAY_CN_ONLINE")
             }
+        }
+    }
+
+    /**
+     * A value out of the acquirer order's nested `ext_params` (itself a JSON string), where the gateway
+     * keeps fields it does not promote to the top level — card_class among them. Returns null when
+     * ext_params is absent, the sentinel "NULL", not valid JSON, or the key is missing/blank.
+     */
+    private fun extParam(obj: JSONObject?, key: String): String? {
+        val raw = obj?.optString("ext_params")?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) && !it.equals("NULL", ignoreCase = false) }
+            ?: return null
+        return try {
+            JSONObject(raw).optString(key).trim().takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -318,7 +339,7 @@ internal object AcquirerCallbackParser {
      */
     private val FORWARDED_CARD_KEYS = listOf(
         "cardScheme", "cardLast4", "cardEntryMode", "cardAppLabel",
-        "cardAid", "cardPanSeqNo", "authCode", "surcharge", "provider",
+        "cardAid", "cardPanSeqNo", "authCode", "surcharge", "provider", "cardClass",
         // Wallet (QR) payment method, so the kiosk-relay shape carries it like the order-JSON shape.
         "channel", "walletType",
         // EMV kernel result forwarded by the acquirer on failure/cancel (no order JSON to carry it),
