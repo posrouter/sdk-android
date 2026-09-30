@@ -502,7 +502,12 @@ internal object LensingProtocolEngine {
                     amountCents = wire.amount,
                     currency = wire.currency,
                     remark = "Refund",
-                    method = null
+                    method = null,
+                    metadata = mapOf(
+                        com.posrouter.RemotePaymentRequest.META_OPERATION to
+                            com.posrouter.RemotePaymentRequest.OPERATION_REFUND,
+                        com.posrouter.RemotePaymentRequest.META_ATTEMPT_ID to wire.attemptId
+                    )
                 )
             )
 

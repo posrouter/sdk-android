@@ -23,8 +23,23 @@ data class RemotePaymentRequest(
     val returnTo: String?
         get() = (metadata["return_to"] ?: metadata["returnTo"])?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
 
+    /**
+     * True when this is a NATS refund the SDK is already running on the local acquirer, not a pay.
+     * [method] stays null on refunds so older terminals never mistake one for a purchase, which is
+     * why the terminal has to check this before treating a null [method] as "open the picker".
+     */
+    val isRefund: Boolean
+        get() = metadata[META_OPERATION].equals(OPERATION_REFUND, ignoreCase = true)
+
+    /** Refund attempt id; the acquirer does not echo it back, so the terminal must keep it. */
+    val attemptId: String?
+        get() = metadata[META_ATTEMPT_ID]?.trim()?.takeIf { it.isNotEmpty() }
+
     companion object {
         const val RETURN_TO_PICKER = "picker"
         const val RETURN_TO_STANDBY = "standby"
+        const val META_OPERATION = "operation"
+        const val META_ATTEMPT_ID = "attemptId"
+        const val OPERATION_REFUND = "refund"
     }
 }
