@@ -19,6 +19,7 @@ internal data class PaymentVoidRequest(
 
     fun toJsonString(): String {
         val fields = mutableListOf(
+            """"action":"void"""",
             """"acquirerCode":"$acquirerCode"""",
             """"merchantId":"$merchantId"""",
             """"terminalId":"$terminalId"""",

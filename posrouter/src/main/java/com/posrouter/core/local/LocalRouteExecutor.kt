@@ -83,7 +83,10 @@ internal object LocalRouteExecutor {
         config: POSRouterConfig
     ): String {
         val separator = config.localParamSeparator
+        // action=pay 显式标明操作（与 connect/refund 对称）。本地显式-intent 轨道只靠 lens data 区分操作，
+        // 不带 action 时收单 App 按默认当付款——pay 本就是默认，但显式带上更稳、也让所有操作一致。
         val parts = mutableListOf(
+            "action=pay",
             LensLocalEncoder.pair("amount", formatAmountDecimal(request.amount), separator),
             LensLocalEncoder.pair("currency", request.currency, separator),
             LensLocalEncoder.pair("orderid", request.orderId, separator)
@@ -99,7 +102,9 @@ internal object LocalRouteExecutor {
         config: POSRouterConfig
     ): String {
         val separator = config.localParamSeparator
+        // action=refund 是收单 App 本地显式-intent 轨道区分「退款 vs 付款」的唯一依据——缺了它退款会被当付款执行（真实事故）。
         val parts = listOf(
+            "action=refund",
             LensLocalEncoder.pair("amount", formatAmountDecimal(request.amount), separator),
             LensLocalEncoder.pair("orderid", request.orderId, separator)
         )

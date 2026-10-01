@@ -80,6 +80,7 @@ internal data class WirePaymentRequest(
 ) {
     fun toJsonString(): String {
         val fields = mutableListOf(
+            """"action":"pay"""",
             """"terminalId":"${escapeJson(terminalId)}"""",
             """"amount":$amount""",
             """"currency":"${escapeJson(currency)}"""",

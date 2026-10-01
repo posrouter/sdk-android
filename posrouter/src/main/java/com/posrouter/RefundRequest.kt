@@ -80,6 +80,7 @@ internal data class WireRefundRequest(
 
     fun toJsonString(): String {
         val fields = mutableListOf(
+            """"action":"refund"""",
             """"terminalId":"${escapeJson(terminalId)}"""",
             """"orderId":"${escapeJson(orderId)}"""",
             """"amount":$amount""",
