@@ -49,6 +49,10 @@ internal object AcquirerCallbackParser {
         // requested `session.amount` does not, so trust the returned total when present.
         val orderJson = uri.getQueryParameter("order")
         val orderAmounts = parseEzyposOrderAmounts(orderJson)
+        // The acquirer's own charged total, when its order object carried one. This is the only
+        // figure that reflects what the customer ACTUALLY paid; everything else below is a request.
+        val authoritativeTotal = orderAmounts?.totalCents?.takeIf { it > 0 }
+        val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
         val metadata = buildMap {
             cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
             orderAmounts?.surchargeCents?.let { put("surcharge", it.toString()) }
@@ -60,8 +64,16 @@ internal object AcquirerCallbackParser {
             // A QR / wallet sale carries no card_* fields; its payment method is the acquirer `channel`
             // (WeChat / Alipay). Without this the wallet sale reached the CRM with no method at all.
             putAll(parseEzyposWallet(orderJson))
+            // A SUCCESS whose acquirer order object carried no charged total is recorded at the only
+            // figure left — the amount we REQUESTED (session.amount). For a cross-border wallet / QR
+            // sale the customer pays in the pricing currency after FX, so the requested figure can be
+            // far from what was actually captured (seen live: a ¥6.66-requested Alipay sale that
+            // actually took ¥3635.91 — the `order` param arrived without total_amount, so the request
+            // was booked as the capture). Never pass the requested amount off as the captured one in
+            // silence: flag the row so the back office reconciles it against the gateway's authoritative
+            // record instead of trusting this provisional figure.
+            if (status == PaymentStatus.APPROVED && authoritativeTotal == null) put("amountUnverified", "true")
         }
-        val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
 
         return PaymentResult(
             terminalId = session?.terminalId ?: config.terminalId,
@@ -71,7 +83,7 @@ internal object AcquirerCallbackParser {
             subMerchantId = session?.subMerchantId,
             status = status,
             transactionId = transactionId,
-            amount = orderAmounts?.totalCents?.takeIf { it > 0 } ?: session?.amount ?: 0L,
+            amount = authoritativeTotal ?: session?.amount ?: 0L,
             currency = session?.currency ?: config.currency,
             message = message,
             metadata = metadata
