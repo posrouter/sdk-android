@@ -356,8 +356,16 @@ internal object AcquirerCallbackParser {
         "channel", "walletType",
         // EMV kernel result forwarded by the acquirer on failure/cancel (no order JSON to carry it),
         // so a recognition failure still leaves its reason in metadata → CRM.
-        "emvResultCode", "emvResultDesc"
+        "emvResultCode", "emvResultDesc",
+        // The Skyzer customer receipt (see KioskDeeplinks.FORWARDED_RESULT_METADATA_KEYS): lets the
+        // initiator read the rail off the slip and print it. A whole receipt, not a card field, so it
+        // is capped under FORWARDED_LONG_KEYS below rather than the 64-char card cap.
+        "skyzerCustomerCopy"
     )
+
+    // Keys that legitimately carry more than a card field's worth of text (a printed receipt). Capped
+    // at MAX_SLIP_FIELD_LENGTH instead of MAX_CARD_FIELD_LENGTH, matching the CRM ingest cap (512).
+    private val FORWARDED_LONG_KEYS = setOf("skyzerCustomerCopy", "skyzerMerchantCopy")
 
     /**
      * Card details forwarded as query params by the kiosk relay, which has no acquirer order JSON to
@@ -366,8 +374,9 @@ internal object AcquirerCallbackParser {
      */
     private fun parseCardDetailsFromQuery(uri: Uri): Map<String, String> = buildMap {
         for (key in FORWARDED_CARD_KEYS) {
+            val cap = if (key in FORWARDED_LONG_KEYS) MAX_SLIP_FIELD_LENGTH else MAX_CARD_FIELD_LENGTH
             uri.getQueryParameter(key)?.trim()
-                ?.takeIf { it.isNotEmpty() && it.length <= MAX_CARD_FIELD_LENGTH }
+                ?.takeIf { it.isNotEmpty() && it.length <= cap }
                 ?.let { put(key, it) }
         }
     }
@@ -383,4 +392,11 @@ internal object AcquirerCallbackParser {
      * longest, a 16-byte AID, is 32 hex characters.
      */
     private const val MAX_CARD_FIELD_LENGTH = 64
+
+    /**
+     * Longest receipt-sized field accepted from the relay (skyzerCustomerCopy). A Skyzer slip is
+     * ~350 chars; 512 matches the CRM ingest metadata cap so both sides truncate identically, and the
+     * TRAN line the rail is read from sits near the top, surviving either way.
+     */
+    private const val MAX_SLIP_FIELD_LENGTH = 512
 }
