@@ -4,13 +4,17 @@ import android.util.Log
 import com.posrouter.LensingContextHolder
 import com.posrouter.PaymentRequest
 import com.posrouter.POSRouterConfig
+import com.posrouter.StatusQueryCallback
+import com.posrouter.StatusQueryResult
 import com.posrouter.WirePaymentRequest
 import com.posrouter.WireRefundRequest
+import com.posrouter.WireStatusQuery
 import com.posrouter.core.local.LocalAcquirerLauncher
 import com.posrouter.core.local.LocalReachabilityCache
 import com.posrouter.core.registry.AcquirerRegistry
 import io.nats.client.Connection
 import io.nats.client.Dispatcher
+import io.nats.client.Message
 import io.nats.client.Nats
 import io.nats.client.Options
 import com.posrouter.POSRouterCallback
@@ -19,6 +23,7 @@ import com.posrouter.PaymentResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.min
@@ -409,7 +414,116 @@ internal object LensingProtocolEngine {
             handleIncomingRefund(String(msg.data, Charsets.UTF_8))
         }
 
+        if (LensingContextHolder.config?.terminalMode == true) {
+            subDispatcher.subscribe(LensingSubjects.querySubject(subjectScope)) { msg ->
+                handleIncomingQuery(msg)
+            }
+            subDispatcher.subscribe(LensingSubjects.merchantQueryWildcard(subjectScope)) { msg ->
+                handleIncomingQuery(msg)
+            }
+        }
+
         subscribedResultScopes.add(resultScopeKey(subjectScope))
+    }
+
+    /**
+     * Answers only when this terminal recorded a final outcome; unknown orders stay silent so the
+     * querier can tell "nobody knows" from a real answer. Each answer goes to the querier's inbox
+     * and is re-broadcast on `.result` so every participant can reconcile.
+     */
+    private fun handleIncomingQuery(msg: Message) {
+        val query = WireStatusQuery.fromJson(String(msg.data, Charsets.UTF_8)) ?: run {
+            Log.w(TAG, "Ignoring unparseable status query")
+            return
+        }
+        val config = LensingContextHolder.config ?: return
+        if (query.isBroadcast && query.subMerchantId != null && query.subMerchantId != config.subMerchantId) {
+            return
+        }
+        val records = TerminalResultStore.find(query.orderId, query.attemptId, query.operation)
+        if (records.isEmpty()) {
+            Log.d(TAG, "Status query ${query.queryId} order=${query.orderId}: unknown here, not answering")
+            return
+        }
+        val replyTo = msg.replyTo?.takeIf { it.isNotBlank() }
+        records.forEach { record ->
+            val answer = record.copy(metadata = record.metadata + (StatusQueryResult.META_QUERY_ID to query.queryId))
+            val payload = answer.toJsonString()
+            replyTo?.let { publishToSubject(it, payload) }
+            resolveResultScope(answer)?.let { publishToSubject(LensingSubjects.resultSubject(it), payload) }
+        }
+        Log.i(
+            TAG,
+            "Status query ${query.queryId} from ${query.requestedBy} order=${query.orderId}: answered ${records.size}"
+        )
+    }
+
+    /**
+     * Publishes [query] with a private inbox as reply subject and collects terminal answers until
+     * [timeoutMs] elapses. Answers also settle any pending pay/refund callback for the same attempt.
+     */
+    fun dispatchStatusQuery(query: WireStatusQuery, timeoutMs: Long, callback: StatusQueryCallback) {
+        val connection = natsConnection
+        if (connection == null || state != LensingState.CONNECTED) {
+            mainScope.launch {
+                callback.onError(POSRouterError("NOT_CONNECTED", "Lensing engine not connected"))
+            }
+            return
+        }
+        val subDispatcher = dispatcher ?: connection.createDispatcher { }.also { dispatcher = it }
+
+        val answers = java.util.concurrent.ConcurrentHashMap<String, PaymentResult>()
+        val inbox = connection.createInbox()
+        val subscription = try {
+            subDispatcher.subscribe(inbox) { msg ->
+                // Server answers 503 "no responders" on the inbox when no terminal is subscribed.
+                if (msg.isStatusMessage || msg.data == null || msg.data.isEmpty()) {
+                    Log.d(TAG, "Status query ${query.queryId}: inbox status ${msg.status?.code}")
+                    return@subscribe
+                }
+                val answer = runCatching { PaymentResult.fromJson(String(msg.data, Charsets.UTF_8)) }
+                    .getOrNull() ?: return@subscribe
+                if (!answer.orderId.equals(query.orderId, ignoreCase = true)) return@subscribe
+                val answeredQuery = answer.metadata[StatusQueryResult.META_QUERY_ID]
+                if (answeredQuery != null && answeredQuery != query.queryId) return@subscribe
+                val key = "${answer.terminalId}|${answer.orderId}|${answer.attemptId}"
+                if (answers.putIfAbsent(key, answer) != null) return@subscribe
+                PaymentResultDispatcher.deliver(
+                    answer,
+                    PaymentResultSource.NATS_INBOUND,
+                    publishNats = false,
+                    dispatchTerminal = false
+                )
+                mainScope.launch { callback.onAnswer(answer) }
+            }
+        } catch (e: Exception) {
+            mainScope.launch {
+                callback.onError(POSRouterError("SUBSCRIBE_FAILED", e.message ?: "Failed to subscribe query inbox"))
+            }
+            return
+        }
+
+        val subject = LensingSubjects.querySubject(query.subjectScope())
+        try {
+            connection.publish(subject, inbox, query.toJsonString().toByteArray(Charsets.UTF_8))
+            Log.i(TAG, "Status query ${query.queryId} published on $subject order=${query.orderId}")
+        } catch (e: Exception) {
+            runCatching { subDispatcher.unsubscribe(subscription) }
+            mainScope.launch {
+                callback.onError(POSRouterError("PUBLISH_FAILED", e.message ?: "Failed to publish status query"))
+            }
+            return
+        }
+
+        mainScope.launch {
+            delay(timeoutMs)
+            runCatching { subDispatcher.unsubscribe(subscription) }
+            val collected = answers.values.sortedBy {
+                it.metadata[StatusQueryResult.META_FINALIZED_AT]?.toLongOrNull() ?: 0L
+            }
+            Log.i(TAG, "Status query ${query.queryId} complete: ${collected.size} answer(s)")
+            callback.onComplete(StatusQueryResult(query.queryId, query.orderId, collected))
+        }
     }
 
     /** Initiator must listen on the pay wire namespace (V1.6 subject) for remote `.result`. */

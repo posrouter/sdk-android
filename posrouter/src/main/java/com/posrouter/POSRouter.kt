@@ -18,6 +18,7 @@ import com.posrouter.core.lensing.PaymentVoidRequest
 import com.posrouter.core.lensing.RefundAttemptIdResolver
 import com.posrouter.core.lensing.RefundAttemptRegistry
 import com.posrouter.core.lensing.TerminalEventDispatcher
+import com.posrouter.core.lensing.TerminalResultStore
 import com.posrouter.core.lensing.VoidedAttemptRegistry
 import com.posrouter.core.local.AcquirerCallbackParser
 import com.posrouter.core.local.LocalAcquirerLauncher
@@ -467,6 +468,41 @@ object POSRouter {
             publishNats = true,
             dispatchTerminal = true
         )
+    }
+
+    /**
+     * Asks terminals over NATS for the final status of [StatusQueryRequest.orderId]. Terminals that
+     * recorded an outcome answer to this caller and re-broadcast it on `.result` for every other
+     * participant; terminals that do not know the order stay silent. Answers also settle any pending
+     * [pay] / [refund] callback for the same attempt.
+     */
+    fun queryStatus(request: StatusQueryRequest, callback: StatusQueryCallback) {
+        val config = LensingContextHolder.config ?: run {
+            callback.onError(POSRouterError("NOT_INITIALIZED", "POSRouter.initialize has not been called"))
+            return
+        }
+        val wire = try {
+            request.toWire(config)
+        } catch (e: IllegalArgumentException) {
+            callback.onError(POSRouterError("INVALID_REQUEST", e.message ?: "Invalid status query"))
+            return
+        }
+        LensingProtocolEngine.dispatchStatusQuery(wire, request.timeoutMs, callback)
+    }
+
+    /**
+     * Terminal mode: remember a final outcome that never went through the SDK (e.g. a same-device
+     * charge relayed straight back to the partner app) so [queryStatus] can still be answered.
+     * Results passing through [publishPaymentResult] or [deliverAcquirerCallback] are recorded automatically.
+     */
+    fun recordTerminalResult(result: PaymentResult) {
+        val config = LensingContextHolder.config
+        val enriched = if (result.terminalId.isBlank() && config != null) {
+            result.copy(terminalId = config.terminalId)
+        } else {
+            result
+        }
+        TerminalResultStore.record(enriched)
     }
 
     fun setTerminalListener(listener: POSRouterTerminalListener?) {

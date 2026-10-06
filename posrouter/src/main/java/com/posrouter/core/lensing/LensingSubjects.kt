@@ -36,6 +36,9 @@ internal object LensingSubjects {
     /** Sentinel when [subMerchantId] is absent; real sub-merchant ids must not use this value. */
     const val SUB_MERCHANT_PLACEHOLDER = "_"
 
+    /** Terminal segment addressing all terminals of a merchant; real terminal ids must not use this value. */
+    const val BROADCAST_TERMINAL_ID = "_ALL"
+
     fun paySubject(scope: LensingSubjectScope): String = verbSubject(scope, "pay")
 
     fun resultSubject(scope: LensingSubjectScope): String = verbSubject(scope, "result")
@@ -45,6 +48,26 @@ internal object LensingSubjects {
     fun voidSubject(scope: LensingSubjectScope): String = verbSubject(scope, "void")
 
     fun refundSubject(scope: LensingSubjectScope): String = verbSubject(scope, "refund")
+
+    /**
+     * Status query. With [BROADCAST_TERMINAL_ID] as terminal segment the query targets every
+     * terminal of the merchant, e.g. lensing.SUPY.abc123._._ALL.query
+     */
+    fun querySubject(scope: LensingSubjectScope): String = verbSubject(scope, "query")
+
+    /**
+     * Terminal-side subscription for merchant-wide queries regardless of sub-merchant segment,
+     * e.g. lensing.SUPY.abc123.*._ALL.query
+     */
+    fun merchantQueryWildcard(scope: LensingSubjectScope): String =
+        listOf(
+            "lensing",
+            sanitizeSegment(scope.acquirerCode.uppercase(), "acquirerCode"),
+            sanitizeSegment(scope.merchantId, "merchantId"),
+            "*",
+            BROADCAST_TERMINAL_ID,
+            "query"
+        ).joinToString(".")
 
     /** Subscribe prefix for all verbs on one terminal namespace, e.g. lensing.SUPY.abc123._.TID001.> */
     fun terminalWildcard(scope: LensingSubjectScope): String =

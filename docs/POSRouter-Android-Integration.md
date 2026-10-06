@@ -212,6 +212,40 @@ POSRouter.refund(
 )
 ```
 
+## 8.1 Query the final status of a transaction
+
+Use this when you lost track of a pay or refund (app killed, network drop, callback never came)
+and need to reconcile your records. The query goes out over NATS; every terminal that recorded a
+final outcome for the order answers. Terminals that don't know the order stay silent, so an empty
+answer list means "unknown", not "failed".
+
+```kotlin
+POSRouter.queryStatus(
+    StatusQueryRequest(
+        orderId = "ORDER-9",
+        terminalId = null,          // null = ask every terminal of the merchant; or "TID001"
+        operation = null,           // StatusQueryRequest.OPERATION_PAY / OPERATION_REFUND / null = both
+        timeoutMs = 5_000
+    ),
+    object : StatusQueryCallback {
+        override fun onAnswer(result: PaymentResult) { /* update your DB as answers arrive */ }
+        override fun onComplete(result: StatusQueryResult) { /* result.answers may be empty */ }
+        override fun onError(error: POSRouterError) { /* NOT_CONNECTED, INVALID_REQUEST, ... */ }
+    }
+)
+```
+
+- Each answer is the terminal's final `PaymentResult`; refunds carry `metadata["operation"] = "refund"`.
+  `metadata["queryId"]` and `metadata["finalizedAt"]` (epoch ms) are added.
+- Answers are also re-broadcast on the terminal's `.result` subject, so other participants
+  listening there reconcile too, and any pending `pay` / `refund` callback for that attempt resolves.
+- Wire: `lensing.{ACQ}.{MID}.{SUB|_}.{TID}.query` for one terminal, or
+  `lensing.{ACQ}.{MID}._._ALL.query` merchant-wide (`_ALL` is a reserved terminal id). The
+  request carries a NATS reply inbox; terminals reply there with the result JSON.
+- Terminal apps (`terminalMode = true`) answer automatically for outcomes that went through the SDK.
+  Outcomes finished outside the SDK should be recorded with `POSRouter.recordTerminalResult(result)`.
+  Records are kept for 30 days.
+
 ---
 
 ## 9. Connection status (for a status indicator)

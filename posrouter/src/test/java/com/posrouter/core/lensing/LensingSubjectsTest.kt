@@ -64,6 +64,30 @@ class LensingSubjectsTest {
     }
 
     @Test
+    fun querySubjectFormat() {
+        assertEquals(
+            "lensing.SUPY.abc123.REST01.TID001.query",
+            LensingSubjects.querySubject(scopedWithSub)
+        )
+    }
+
+    @Test
+    fun merchantBroadcastQuerySubjectFormat() {
+        assertEquals(
+            "lensing.SUPY.abc123._._ALL.query",
+            LensingSubjects.querySubject(scope.copy(terminalId = LensingSubjects.BROADCAST_TERMINAL_ID))
+        )
+    }
+
+    @Test
+    fun merchantQueryWildcardIgnoresSubMerchantAndTerminal() {
+        assertEquals(
+            "lensing.SUPY.abc123.*._ALL.query",
+            LensingSubjects.merchantQueryWildcard(scopedWithSub)
+        )
+    }
+
+    @Test
     fun subMerchantPlaceholderIsReserved() {
         assertThrows(IllegalArgumentException::class.java) {
             LensingSubjects.subMerchantSegment("_")

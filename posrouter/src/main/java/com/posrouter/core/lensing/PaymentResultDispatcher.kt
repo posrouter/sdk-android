@@ -1,6 +1,7 @@
 package com.posrouter.core.lensing
 
 import android.util.Log
+import com.posrouter.LensingContextHolder
 import com.posrouter.PaymentResult
 
 internal enum class PaymentResultSource {
@@ -30,6 +31,11 @@ internal object PaymentResultDispatcher {
 
         val orderId = result.orderId
         val attemptId = result.attemptId
+
+        // Only outcomes this terminal produced itself; NATS_INBOUND ones belong to other terminals.
+        if (source != PaymentResultSource.NATS_INBOUND && LensingContextHolder.config?.terminalMode == true) {
+            TerminalResultStore.record(result)
+        }
 
         val deliveredLocally = RefundAttemptRegistry.deliverCallback(result) ||
             PaymentAttemptRegistry.deliverCallback(result)
