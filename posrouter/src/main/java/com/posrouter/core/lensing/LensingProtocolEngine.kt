@@ -511,8 +511,22 @@ internal object LensingProtocolEngine {
                 )
             )
 
+            // Responder side: remember this refund's amount/currency, keyed by
+            // (terminalId, orderId, attemptId), BEFORE launching. The acquirer refund deeplink
+            // callback carries neither amount nor currency, so AcquirerCallbackParser.parseRefundCallback
+            // reads them back from here; without this entry the executor publishes a NATS result with
+            // amount 0 and the settings currency (the initiator then records the refund as 0 — see the
+            // screenshot of lensing.*.result amount:0). The initiator stores its own entry in
+            // dispatchRefund; the executor is a different process (e.g. the kiosk) and had none, which is
+            // why remote refunds lost the amount. The callback is a no-op: this device only executes and
+            // relays over NATS (publishPaymentResult), and PaymentResultDispatcher publishes to NATS even
+            // when this local "delivery" fires. The entry is removed when the result dispatches
+            // (RefundAttemptRegistry.deliverCallback) or on launch failure just below.
+            RefundAttemptRegistry.store(wire, RefundResponderNoopCallback)
+
             val launch = LocalAcquirerLauncher.launchRefund(context, config, routing, wire)
             if (!launch.success) {
+                RefundAttemptRegistry.close(wire)
                 TerminalEventDispatcher.dispatchRemotePaymentLaunchFailed(
                     wire.orderId,
                     "Could not launch local acquirer refund"
@@ -647,4 +661,15 @@ internal object LensingProtocolEngine {
         val request: WirePaymentRequest,
         val callback: POSRouterCallback
     )
+
+    /**
+     * Placeholder callback for refunds this device only *executes* (received over NATS in
+     * [handleIncomingRefund]). The real outcome is published back to the initiator over NATS, not
+     * delivered to a local callback, so there is nothing to do here — the entry exists only so
+     * [AcquirerCallbackParser.parseRefundCallback] can read the amount/currency back.
+     */
+    private object RefundResponderNoopCallback : POSRouterCallback {
+        override fun onResult(result: com.posrouter.PaymentResult) = Unit
+        override fun onError(error: POSRouterError) = Unit
+    }
 }
