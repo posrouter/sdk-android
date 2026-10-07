@@ -83,13 +83,7 @@ internal object AcquirerCallbackParser {
             subMerchantId = session?.subMerchantId,
             status = status,
             transactionId = transactionId,
-            // amount is the charged TOTAL (base + surcharge), the figure the downstream order sync
-            // subtracts the surcharge back out of to recover the base. When the acquirer returned an
-            // authoritative total, use it. Otherwise fall back to the REQUESTED base — but a surcharge
-            // the acquirer reported was added on TOP of that base, so it must be added back here;
-            // otherwise the sync would subtract it from the base and under-report both base and total
-            // by one surcharge (seen live on ezypos 2% surcharge: 4.00 base booked as 3.92 / 4.00).
-            amount = authoritativeTotal ?: ((session?.amount ?: 0L) + (orderAmounts?.surchargeCents ?: 0L)),
+            amount = authoritativeTotal ?: session?.amount ?: 0L,
             currency = session?.currency ?: config.currency,
             message = message,
             metadata = metadata
