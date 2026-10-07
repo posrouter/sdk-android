@@ -83,7 +83,16 @@ internal object AcquirerCallbackParser {
             subMerchantId = session?.subMerchantId,
             status = status,
             transactionId = transactionId,
-            amount = authoritativeTotal ?: session?.amount ?: 0L,
+            // amount is the charged TOTAL (base + surcharge) — the figure the downstream order sync
+            // subtracts the surcharge back out of to recover the base, and the receipt splits. Use the
+            // acquirer's authoritative total when it returned one. Otherwise fall back to the REQUESTED
+            // base, but add back any surcharge the acquirer reported on TOP of it (ezypos/WorldPayPOS,
+            // whose callback carries a surcharge but no authoritative total): without this the sync
+            // would subtract the surcharge from the base and under-report both base and total by one
+            // surcharge (seen live on WorldPayPOS: a 4.00 base booked as base 3.92 / total 4.00). The
+            // surcharge may arrive in the acquirer order JSON (orderAmounts) or forwarded on a kiosk
+            // relay as the `surcharge` query param (already folded into metadata above).
+            amount = authoritativeTotal ?: ((session?.amount ?: 0L) + surchargeFromCallback(orderAmounts, metadata)),
             currency = session?.currency ?: config.currency,
             message = message,
             metadata = metadata
@@ -92,6 +101,17 @@ internal object AcquirerCallbackParser {
 
     /** Total (inclusive) and surcharge, in minor units, pulled from the acquirer's returned order JSON. */
     private data class EzyposOrderAmounts(val totalCents: Long?, val surchargeCents: Long?)
+
+    /**
+     * The surcharge the acquirer added on top of the requested base, in minor units — from the order
+     * JSON when the acquirer returned one, otherwise from the `surcharge` the kiosk relay forwarded into
+     * metadata. Used only to reconstruct the charged total when the acquirer gave no authoritative one;
+     * 0 when none was reported (most sales, and any flow where the surcharge is already in the amount).
+     */
+    private fun surchargeFromCallback(orderAmounts: EzyposOrderAmounts?, metadata: Map<String, String>): Long =
+        orderAmounts?.surchargeCents?.takeIf { it > 0 }
+            ?: metadata["surcharge"]?.toLongOrNull()?.takeIf { it > 0 }
+            ?: 0L
 
     /**
      * The `order` callback param is the acquirer order object serialised as JSON. `total_amount_minor`
