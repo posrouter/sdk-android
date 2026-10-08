@@ -296,6 +296,16 @@ internal object AcquirerCallbackParser {
 
         val pending = RefundAttemptRegistry.lookup(config.terminalId, orderId, attemptId)
 
+        // The amount the acquirer ACTUALLY refunded, forwarded by the kiosk relay as the `amount` query
+        // param in minor units (KioskDeeplinks.buildPartnerResultUri, only when > 0). It is read first,
+        // like the pay branch trusts the acquirer's own total over the request: `pending.amount` is
+        // merely what WE asked for, and a refund where the two differ (possible now that partial
+        // refunds are open) is exactly the error the initiator's settle-time check exists to catch —
+        // echoing the request back here would make that check pass unconditionally. Kept as a fallback
+        // chain so an older kiosk that forwards no amount still yields the request figure, and 0 only
+        // when neither is known (the initiator treats 0 as "unknown", not as a mismatch).
+        val refundedAmount = uri.getQueryParameter("amount")?.trim()?.toLongOrNull()?.takeIf { it > 0 }
+
         return PaymentResult(
             terminalId = pending?.terminalId ?: config.terminalId,
             orderId = orderId,
@@ -304,7 +314,7 @@ internal object AcquirerCallbackParser {
             subMerchantId = pending?.subMerchantId,
             status = mapStatus(statusRaw),
             transactionId = transactionId,
-            amount = pending?.amount ?: 0L,
+            amount = refundedAmount ?: pending?.amount ?: 0L,
             currency = pending?.currency ?: config.currency,
             message = uri.getQueryParameter("message") ?: statusRaw.ifBlank { null },
             metadata = mapOf("operation" to "refund")
@@ -372,6 +382,11 @@ internal object AcquirerCallbackParser {
     private val FORWARDED_CARD_KEYS = listOf(
         "cardScheme", "cardLast4", "cardEntryMode", "cardAppLabel",
         "cardAid", "cardPanSeqNo", "authCode", "surcharge", "provider", "cardClass",
+        // Tip the cardholder added on the terminal, in minor units (Skyzer `tipAmount`, mapped by the
+        // kiosk's SkyzerResultMapper). Only the Skyzer path sets it today: ezypos has no tip field and
+        // its `total − display` difference is already booked as `surcharge` above, which is left as-is.
+        // Forwarded so the initiator sees the tip on the LIVE result, not only on the replayed deeplink.
+        "tip",
         // Wallet (QR) payment method, so the kiosk-relay shape carries it like the order-JSON shape.
         "channel", "walletType",
         // EMV kernel result forwarded by the acquirer on failure/cancel (no order JSON to carry it),
