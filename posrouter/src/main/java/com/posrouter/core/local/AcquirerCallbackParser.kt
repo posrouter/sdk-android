@@ -56,6 +56,12 @@ internal object AcquirerCallbackParser {
         val metadata = buildMap {
             cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
             orderAmounts?.surchargeCents?.let { put("surcharge", it.toString()) }
+            // The acquirer's own net settlement for this sale (charged total minus its transaction fee,
+            // computed from the merchant's rate — NOT the customer surcharge, which can differ). Carried
+            // through for the terminal's Settlement tally and CRM reconciliation; absent when the acquirer
+            // had not finished computing it yet (it is written just after the sale saves), in which case
+            // nothing downstream invents a figure.
+            orderAmounts?.settleCents?.let { put("settle", it.toString()) }
             // Kiosk relay (local_posrouter_kiosk) hands the result back over a bare pay_result deeplink
             // with the card details as query params rather than an acquirer order JSON — parse those first
             // so a direct acquirer order JSON, when present, still overrides them.
@@ -99,8 +105,12 @@ internal object AcquirerCallbackParser {
         )
     }
 
-    /** Total (inclusive) and surcharge, in minor units, pulled from the acquirer's returned order JSON. */
-    private data class EzyposOrderAmounts(val totalCents: Long?, val surchargeCents: Long?)
+    /**
+     * Total (inclusive), surcharge and net settlement, in minor units, pulled from the acquirer's
+     * returned order JSON. [settleCents] is the acquirer's own post-fee settlement for the sale
+     * (null until it has computed it); it is not derived here — only passed through if present.
+     */
+    private data class EzyposOrderAmounts(val totalCents: Long?, val surchargeCents: Long?, val settleCents: Long?)
 
     /**
      * The surcharge the acquirer added on top of the requested base, in minor units — from the order
@@ -136,7 +146,11 @@ internal object AcquirerCallbackParser {
                 ?.takeIf { it > 0 && obj.optBoolean("retail_surcharge", true) }
                 ?: if (totalCents != null && displayCents != null && totalCents > displayCents)
                     totalCents - displayCents else null
-            EzyposOrderAmounts(totalCents, surchargeCents)
+            // The acquirer's net settlement for this sale (charged total − its transaction fee), decimal
+            // dollars like total_amount. Computed by the acquirer from the merchant's rate just after the
+            // sale saves, so it may be absent/zero on the first callback; only forwarded when present.
+            val settleCents = decimalToMinor(obj.optString("settle_amount"))?.takeIf { it > 0 }
+            EzyposOrderAmounts(totalCents, surchargeCents, settleCents)
         } catch (e: Exception) {
             null
         }
