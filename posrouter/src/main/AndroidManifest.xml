@@ -17,6 +17,9 @@
     <queries>
         <package android:name="com.posrouter.kiosk" />
         <package android:name="ezypay.com.globe.cardpos" />
+        <!-- Sandbox acquirer variant: without this, getPackageInfo(...sandbox) is NameNotFound on
+             Android 11+ even when installed, so "prefer sandbox when both are installed" never fires. -->
+        <package android:name="ezypay.com.globe.cardpos.sandbox" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="posrouter-kiosk" />

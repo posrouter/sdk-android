@@ -3,6 +3,7 @@ package com.posrouter.core.local
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import com.posrouter.POSRouterConfig
 import com.posrouter.WirePaymentRequest
 import com.posrouter.WireRefundRequest
@@ -111,14 +112,39 @@ internal object LocalRouteExecutor {
         return LensLocalEncoder.joinPairs(parts, separator)
     }
 
+    /**
+     * 两包并存时优先投沙箱：目标包若同机装了 "<pkg>.sandbox" 变体，就把单投给沙箱包。
+     * - 生产门店机只装生产包 → 沙箱变体不存在 → 原样返回生产包，行为不变（不是静默兜底，是 Arik 明确要的「两包都在时优先沙箱」）。
+     * - 目标本身已是 .sandbox 的不再二次追加。
+     * - pay / refund / connect 共用本解析；装机状态不变则同一笔的 pay 与其 refund 命中同一包，保持一致。
+     */
+    private fun resolvePreferSandbox(context: Context, targetPackageName: String): String =
+        preferSandboxPackage(targetPackageName) { isPackageInstalled(context, it) }
+
+    /** Pure core of [resolvePreferSandbox], split out so it is JVM-unit-testable without a Context. */
+    internal fun preferSandboxPackage(targetPackageName: String, isInstalled: (String) -> Boolean): String {
+        if (targetPackageName.isBlank() || targetPackageName.endsWith(".sandbox")) return targetPackageName
+        val sandbox = "$targetPackageName.sandbox"
+        return if (isInstalled(sandbox)) sandbox else targetPackageName
+    }
+
+    private fun isPackageInstalled(context: Context, pkg: String): Boolean =
+        try {
+            context.packageManager.getPackageInfo(pkg, 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+
     private fun launchExplicitIntent(
         context: Context,
         targetPackageName: String,
         lensData: String
     ): Boolean {
         if (targetPackageName.isBlank()) return false
+        val pkg = resolvePreferSandbox(context, targetPackageName)
         val intent = Intent(Intent.ACTION_MAIN).apply {
-            setPackage(targetPackageName)
+            setPackage(pkg)
             addCategory(Intent.CATEGORY_LAUNCHER)
             putExtra(LENS_DATA_KEY, lensData)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -139,7 +165,7 @@ internal object LocalRouteExecutor {
         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
             addCategory(Intent.CATEGORY_BROWSABLE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (targetPackageName.isNotBlank()) setPackage(targetPackageName)
+            if (targetPackageName.isNotBlank()) setPackage(resolvePreferSandbox(context, targetPackageName))
         }
         return try {
             context.startActivity(intent)

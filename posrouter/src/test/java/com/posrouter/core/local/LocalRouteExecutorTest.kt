@@ -65,6 +65,41 @@ class LocalRouteExecutorTest {
     }
 
     @Test
+    fun preferSandboxRoutesToSandboxWhenBothInstalled() {
+        // 生产包 + 沙箱包都装着 → 投沙箱包（Arik 要的优先级）
+        val installed = setOf("ezypay.com.globe.cardpos", "ezypay.com.globe.cardpos.sandbox")
+        assertEquals(
+            "ezypay.com.globe.cardpos.sandbox",
+            LocalRouteExecutor.preferSandboxPackage("ezypay.com.globe.cardpos") { it in installed }
+        )
+    }
+
+    @Test
+    fun preferSandboxKeepsProdWhenOnlyProdInstalled() {
+        // 生产门店机只装生产包 → 沙箱变体不存在 → 原样投生产包，行为不变
+        val installed = setOf("ezypay.com.globe.cardpos")
+        assertEquals(
+            "ezypay.com.globe.cardpos",
+            LocalRouteExecutor.preferSandboxPackage("ezypay.com.globe.cardpos") { it in installed }
+        )
+    }
+
+    @Test
+    fun preferSandboxDoesNotDoubleSuffixWhenTargetAlreadySandbox() {
+        // 目标本身已是 .sandbox → 不再追加 .sandbox.sandbox
+        val installed = setOf("ezypay.com.globe.cardpos.sandbox", "ezypay.com.globe.cardpos.sandbox.sandbox")
+        assertEquals(
+            "ezypay.com.globe.cardpos.sandbox",
+            LocalRouteExecutor.preferSandboxPackage("ezypay.com.globe.cardpos.sandbox") { it in installed }
+        )
+    }
+
+    @Test
+    fun preferSandboxLeavesBlankTargetUntouched() {
+        assertEquals("", LocalRouteExecutor.preferSandboxPackage("") { true })
+    }
+
+    @Test
     fun buildPayDeepLinkUsesAmpersandQueryParamsLikeEzypos() {
         val uriString = LocalDeepLinkUriBuilder.buildPayUriString(
             WirePaymentRequest(
