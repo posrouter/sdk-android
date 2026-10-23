@@ -56,7 +56,7 @@ Add the dependency (pin the exact version we give you):
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.posrouter:sdk-android:1.6.5")
+    implementation("com.github.posrouter:sdk-android:1.6.14")
 }
 ```
 
@@ -199,6 +199,28 @@ on your pay callback (with `cancelReason = initiator_void`) when the terminal ac
 POSRouter.voidPayment(orderId = "ORDER-9")   // returns false if no such in-flight pay
 ```
 
+`voidPayment` is a **remote** soft-void: it publishes to the terminal and keeps your pay
+callback open until the terminal acks with the `CANCELLED` result.
+
+### 7.1 Abandon a pending payment locally
+
+Unlike `voidPayment`, these **only touch local state on this device — they do not notify the
+terminal**. Use them when you want to stop waiting on a pay callback locally (e.g. your own UI
+timed out) without cancelling the transaction on the terminal.
+
+```kotlin
+// Cancel the local pending pay callback for an order (optionally a specific attempt).
+POSRouter.cancelPendingPayment(orderId = "ORDER-9", attemptId = null)
+
+// Release only the routing claim (lets a new pay UI open for the order); does NOT cancel a
+// pending callback. cancelPendingPayment already releases the claim too.
+POSRouter.releasePaymentClaim(orderId = "ORDER-9", attemptId = null)
+```
+
+Because neither reaches the terminal, a charge that is already in progress there can still
+complete — reconcile with `queryStatus` (§8.1) if you abandoned locally and need the real
+outcome.
+
 ## 8. Refund a settled payment
 
 ```kotlin
@@ -260,6 +282,17 @@ POSRouter.setTerminalListener(object : POSRouterTerminalListener {
 val state = POSRouter.currentLensingState()
 ```
 
+When the indicator is stuck non-`CONNECTED`, or after returning from background:
+
+```kotlin
+POSRouter.reconnectLensing()                 // re-run Gateway discovery + open a fresh NATS session
+                                             // (use from a Setup / Reconnect button)
+
+// After returning from background, pass elapsedRealtime() so the SDK refreshes only when the
+// socket is actually dead (CONNECTED) or after a long idle (not CONNECTED):
+POSRouter.refreshLensingConnection(backgroundMs = SystemClock.elapsedRealtime())
+```
+
 | State | Meaning | Indicator |
 |---|---|---|
 | `CONNECTED` | Ready to transact | Green `#22C55E` |
@@ -278,6 +311,15 @@ globally or per call (values are `RoutePreference` string constants):
 ```kotlin
 POSRouter.setRoutePreference(RoutePreference.REMOTE_ONLY)                 // global, or per-call:
 POSRouter.pay(activity, request, callback, routePreference = RoutePreference.REMOTE_ONLY)
+
+POSRouter.getRoutePreference()                                           // read the current global preference
+```
+
+Before offering `LOCAL_POSROUTER_KIOSK` (or `LOCAL_ONLY`), you can check whether a same-device
+Kiosk/acquirer is actually installed — it never throws:
+
+```kotlin
+if (POSRouter.isLocalKioskAvailable(context)) { /* show the local-pay option */ }
 ```
 
 | Preference | Behaviour |
@@ -305,6 +347,14 @@ override fun onNewIntent(intent: Intent) {
 
 Register your `callbackUrl` scheme with an intent-filter on that Activity in your
 `AndroidManifest.xml` so the acquirer can return to you.
+
+`deliverAcquirerCallback` both **parses and dispatches** (fires your pay callback + publishes to
+NATS for remote initiators). If you only want to inspect the callback URI without any side
+effects, use the pure parse variant:
+
+```kotlin
+val result: PaymentResult? = POSRouter.parseAcquirerCallback(uri)   // parse only, no dispatch/publish
+```
 
 ---
 
