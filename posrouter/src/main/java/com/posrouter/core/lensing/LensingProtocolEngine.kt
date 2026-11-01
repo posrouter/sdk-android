@@ -46,6 +46,8 @@ internal object LensingProtocolEngine {
     private var reconnectAttempt = 0
     private const val MAX_BACKOFF_MS = 30_000L
     private const val MIN_BACKGROUND_FOR_RECONNECT_MS = 30_000L
+    // void 后等收单端真实最终态的时长；到点仍无结果才合成 CANCELLED 兜底（去重保证真实结果先到就胜出）。
+    private const val VOID_ACK_FALLBACK_MS = 8_000L
     private val ACTIVE_LENSING_STATES = setOf(
         LensingState.DISCOVERING,
         LensingState.CONNECTING,
@@ -591,7 +593,28 @@ internal object LensingProtocolEngine {
         PaymentAttemptRegistry.close(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
         PaymentClaimRegistry.releaseClaim(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)
 
-        acknowledgeInitiatorVoid(voidReq, session)
+        // 真停硬件 + 等真实最终态：收到 NATS void → 拉起收单端 ezypos://void 停 NFC/EMV（规范 level-1 §5.3——
+        // NATS void 只是跨设备回执，停硬件必须另发本 deeplink；否则读卡器仍武装、顾客贴卡会真扣款=误扣/掉单）。
+        // 能拉起收单端时不再「立刻乐观合成 CANCELLED」——让收单端回真实最终态（正常 CANCEL；竞态下 APPROVED=钱真动了）
+        // 作为结果；给 VOID_ACK_FALLBACK_MS 时间，到点仍无结果才合成 CANCELLED（结果去重保证真实结果先到就胜出）。
+        val ctx = LensingContextHolder.applicationContext
+        val cfg = LensingContextHolder.config
+        if (ctx != null && cfg != null) {
+            val routing = AcquirerRegistry.resolve(cfg, session?.attemptCode)
+            mainScope.launch {
+                val r = LocalAcquirerLauncher.launchVoid(ctx, cfg, routing, voidReq.orderId, voidReq.attemptId, voidReq.reason)
+                if (r.success) {
+                    Log.i(TAG, "Void: launched acquirer stop (${r.method}) for order ${voidReq.orderId}; awaiting real outcome")
+                    delay(VOID_ACK_FALLBACK_MS)
+                    acknowledgeInitiatorVoid(voidReq, session) // 兜底：收单端静默才合成；真实结果已到则去重忽略
+                } else {
+                    Log.w(TAG, "Void: could not launch local acquirer stop for order ${voidReq.orderId} (acquirer ${routing.code}); synthesizing cancel")
+                    acknowledgeInitiatorVoid(voidReq, session) // 无本地收单端可停 → 只能立刻合成
+                }
+            }
+        } else {
+            acknowledgeInitiatorVoid(voidReq, session) // 无 context/config → 立刻合成
+        }
     }
 
     private fun handleIncomingRefund(json: String) {

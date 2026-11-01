@@ -18,6 +18,25 @@ internal object LocalDeepLinkUriBuilder {
     fun buildRefundUri(request: WireRefundRequest, config: POSRouterConfig): Uri =
         Uri.parse(buildRefundUriString(request, config.localParamSeparator))
 
+    // Void deep link (ezypos://void?orderid|attemptid|reason) — 停收单端在途收款的硬件。
+    // 规范 level-1 §5.3：NATS void 只是跨设备回执，停硬件必须另发本 deeplink 给收单 App。
+    fun buildVoidUri(targetScheme: String, orderId: String, attemptId: String?, reason: String, separator: LocalParamSeparator): Uri =
+        Uri.parse(buildVoidUriString(targetScheme, orderId, attemptId, reason, separator))
+
+    internal fun buildVoidUriString(
+        targetScheme: String,
+        orderId: String,
+        attemptId: String?,
+        reason: String,
+        separator: LocalParamSeparator = LocalParamSeparator.PIPE
+    ): String {
+        val scheme = parseScheme(targetScheme)
+        val pairs = mutableListOf(LensLocalEncoder.pair("orderid", orderId, separator))
+        if (!attemptId.isNullOrBlank()) pairs.add(LensLocalEncoder.pair("attemptid", attemptId, separator))
+        pairs.add(LensLocalEncoder.pair("reason", reason, separator))
+        return "$scheme://void?${LensLocalEncoder.joinPairs(pairs, separator)}"
+    }
+
     internal fun buildRefundUriString(
         request: WireRefundRequest,
         separator: LocalParamSeparator = LocalParamSeparator.PIPE

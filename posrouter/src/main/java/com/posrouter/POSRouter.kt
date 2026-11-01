@@ -381,17 +381,25 @@ object POSRouter {
         val attemptId = session?.attemptId
             ?: uri.getQueryParameter("attemptid")
             ?: uri.getQueryParameter("attemptId")
+        // 先解析，才能区分 void 后的「仍授权成功」(钱真动了，必须上报) 与「取消/拒绝」(void 已处理，可忽略)。
+        var result = AcquirerCallbackParser.parsePayCallback(uri, config, session) ?: return null
         if (attemptId != null &&
             VoidedAttemptRegistry.isVoided(config.terminalId, orderId, attemptId)
         ) {
-            android.util.Log.i(
+            if (result.status != PaymentStatus.APPROVED) {
+                android.util.Log.i(
+                    "POSRouter",
+                    "Ignoring non-approved acquirer callback for voided attempt order=$orderId attempt=$attemptId status=${result.status}"
+                )
+                return null
+            }
+            // 竞态：void 后收单端仍授权成功（卡在停卡前一瞬已刷过）——绝不能丢弃，如实上报让系统可对账/退款。
+            android.util.Log.w(
                 "POSRouter",
-                "Ignoring acquirer callback for voided attempt order=$orderId attempt=$attemptId"
+                "Void race: acquirer APPROVED after void order=$orderId attempt=$attemptId — surfacing (money moved, not dropping)"
             )
-            return null
+            result = result.copy(metadata = result.metadata + ("voidRace" to "approved_after_void"))
         }
-
-        var result = AcquirerCallbackParser.parsePayCallback(uri, config, session) ?: return null
 
         if (result.status == PaymentStatus.CANCELLED &&
             !result.metadata.containsKey("cancelReason")

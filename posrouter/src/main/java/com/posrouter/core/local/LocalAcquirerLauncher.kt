@@ -98,6 +98,37 @@ internal object LocalAcquirerLauncher {
         return LocalLaunchResult(false)
     }
 
+    // Void：拉起收单端真停在途收款的硬件（停 NFC/EMV + 回 CANCEL）。规范 level-1 §5.3。
+    fun launchVoid(
+        context: Context,
+        config: POSRouterConfig,
+        routing: AcquirerRouting,
+        orderId: String,
+        attemptId: String?,
+        reason: String
+    ): LocalLaunchResult {
+        tryCachedMethod(routing.code, cachedMethod = LocalReachabilityCache.get(routing.code).preferredMethod) {
+            when (it) {
+                LocalLaunchMethod.EXPLICIT_PACKAGE ->
+                    LocalRouteExecutor.launchVoidViaExplicitIntent(context, config, routing, orderId, attemptId, reason)
+                LocalLaunchMethod.DEEP_LINK ->
+                    LocalRouteExecutor.launchVoidViaDeepLink(context, config, routing, orderId, attemptId, reason)
+            }
+        }?.let { return it }
+
+        if (LocalRouteExecutor.launchVoidViaExplicitIntent(context, config, routing, orderId, attemptId, reason)) {
+            return success(routing.code, LocalLaunchMethod.EXPLICIT_PACKAGE)
+        }
+        Log.w(TAG, "Explicit void failed for ${routing.code}, falling back to deep link")
+
+        if (LocalRouteExecutor.launchVoidViaDeepLink(context, config, routing, orderId, attemptId, reason)) {
+            return success(routing.code, LocalLaunchMethod.DEEP_LINK)
+        }
+
+        LocalReachabilityCache.markUnreachable(routing.code)
+        return LocalLaunchResult(false)
+    }
+
     private inline fun tryCachedMethod(
         acquirerCode: String,
         cachedMethod: LocalLaunchMethod?,

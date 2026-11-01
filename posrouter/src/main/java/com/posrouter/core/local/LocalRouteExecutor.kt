@@ -69,6 +69,50 @@ internal object LocalRouteExecutor {
         routing.packageName
     )
 
+    // Void：真停收单端在途收款的硬件（停 NFC/EMV、复位 UI、回 CANCEL）。
+    fun launchVoidViaExplicitIntent(
+        context: Context,
+        config: POSRouterConfig,
+        routing: AcquirerRouting,
+        orderId: String,
+        attemptId: String?,
+        reason: String
+    ): Boolean = launchExplicitIntent(
+        context,
+        routing.packageName,
+        buildVoidLensData(orderId, attemptId, reason, config)
+    )
+
+    fun launchVoidViaDeepLink(
+        context: Context,
+        config: POSRouterConfig,
+        routing: AcquirerRouting,
+        orderId: String,
+        attemptId: String?,
+        reason: String
+    ): Boolean = launchDeepLink(
+        context,
+        LocalDeepLinkUriBuilder.buildVoidUri(routing.schemeUri, orderId, attemptId, reason, config.localParamSeparator),
+        routing.packageName
+    )
+
+    internal fun buildVoidLensData(
+        orderId: String,
+        attemptId: String?,
+        reason: String,
+        config: POSRouterConfig
+    ): String {
+        val separator = config.localParamSeparator
+        // action=void 是收单 App 本地显式-intent 轨道区分「作废 vs 付款/退款」的依据——缺了它 void 会被当付款执行。
+        val parts = mutableListOf(
+            "action=void",
+            LensLocalEncoder.pair("orderid", orderId, separator)
+        )
+        if (!attemptId.isNullOrBlank()) parts.add(LensLocalEncoder.pair("attemptid", attemptId, separator))
+        parts.add(LensLocalEncoder.pair("reason", reason, separator))
+        return LensLocalEncoder.joinPairs(parts, separator)
+    }
+
     internal fun buildConnectLensData(config: POSRouterConfig): String {
         val separator = config.localParamSeparator
         val parts = mutableListOf(
