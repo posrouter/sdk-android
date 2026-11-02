@@ -44,11 +44,12 @@ internal object TerminalEventDispatcher {
     }
 
     /**
-     * True when the host app receives remote payments through [POSRouterTerminalListener] and is
+     * True when the host app receives remote payments (terminal mode routes every one to the app UI
+     * via [TerminalUiCoordinator]; otherwise a registered [POSRouterTerminalListener]) and is
      * therefore the single place that launches the acquirer for them. The SDK must not launch too.
      */
     fun appOwnsAcquirerLaunch(): Boolean =
-        LensingContextHolder.config?.terminalMode != true && listener != null
+        LensingContextHolder.config?.terminalMode == true || listener != null
 
     fun dispatchRemotePaymentLaunchFailed(orderId: String, message: String) {
         listener?.let { l ->
