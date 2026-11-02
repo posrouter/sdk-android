@@ -728,13 +728,15 @@ internal object LensingProtocolEngine {
                 )
             )
 
-            if (PaymentRequest.requiresTerminalMethodSelection(wire.method)) {
-                Log.i(TAG, "Pay awaiting terminal method selection for order ${wire.orderId}")
-                return@launch
-            }
-
-            if (wire.method.equals(METHOD_SKYZER, ignoreCase = true)) {
-                Log.i(TAG, "Skyzer pay delegated to terminal app for order ${wire.orderId}")
+            // One owner per remote pay: when a terminal app listens for remote payments it launches
+            // the acquirer itself (method picker, fixed methods, Skyzer alike) and relays the result.
+            // Launching here as well opened the acquirer twice for the same order, and the extra
+            // instance answered CANCEL before the card was even presented.
+            if (TerminalEventDispatcher.appOwnsAcquirerLaunch() ||
+                PaymentRequest.requiresTerminalMethodSelection(wire.method) ||
+                wire.method.equals(METHOD_SKYZER, ignoreCase = true)
+            ) {
+                Log.i(TAG, "Pay delegated to terminal app for order ${wire.orderId} method=${wire.method}")
                 return@launch
             }
 
