@@ -7,6 +7,7 @@ import android.net.Uri
 import android.provider.Settings
 import com.posrouter.core.lensing.LensingProtocolEngine
 import com.posrouter.core.lensing.LensingState
+import com.posrouter.core.lensing.LocalAcquirerLaunchRegistry
 import com.posrouter.core.lensing.PendingConnectRegistry
 import com.posrouter.core.lensing.PaymentAttemptIdResolver
 import com.posrouter.core.lensing.PaymentAttemptKey
@@ -601,8 +602,21 @@ object POSRouter {
                 orderId,
                 "Could not launch local acquirer"
             )
+        } else {
+            // 真启动了 acquirer：标记这笔单，使后续 void 走「等真实最终态」那条（保留防竞态窗口）。
+            LocalAcquirerLaunchRegistry.markLaunched(config.terminalId, orderId)
         }
         return launch.success
+    }
+
+    /**
+     * Terminal app signal: it launched a local acquirer (e.g. Skyzer) for [orderId] on its own, not
+     * through [launchPendingLocalPay]. Keeps the void fallback window for that order so a live charge
+     * is not cancelled out from under it. No-op if lensing is not configured.
+     */
+    fun markLocalAcquirerLaunched(orderId: String) {
+        val config = LensingContextHolder.config ?: return
+        LocalAcquirerLaunchRegistry.markLaunched(config.terminalId, orderId)
     }
 
     private fun connectResult(config: POSRouterConfig, method: LocalLaunchMethod) = PaymentResult(

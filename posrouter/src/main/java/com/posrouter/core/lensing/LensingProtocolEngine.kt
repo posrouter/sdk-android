@@ -597,19 +597,26 @@ internal object LensingProtocolEngine {
         // NATS void 只是跨设备回执，停硬件必须另发本 deeplink；否则读卡器仍武装、顾客贴卡会真扣款=误扣/掉单）。
         // 能拉起收单端时不再「立刻乐观合成 CANCELLED」——让收单端回真实最终态（正常 CANCEL；竞态下 APPROVED=钱真动了）
         // 作为结果；给 VOID_ACK_FALLBACK_MS 时间，到点仍无结果才合成 CANCELLED（结果去重保证真实结果先到就胜出）。
+        // 这笔单本终端是否真启动过 acquirer（card/QR 经 launchPendingLocalPay，Skyzer 经 markLocalAcquirerLaunched）。
+        // 没启动=还停在选择页：没有任何收单端会回真实最终态，等那 8 秒纯属白等（「选择页取消很慢」的根因）。
+        val acquirerLaunched = LocalAcquirerLaunchRegistry.isLaunched(voidReq.terminalId, voidReq.orderId)
+        LocalAcquirerLaunchRegistry.clear(voidReq.terminalId, voidReq.orderId)
         val ctx = LensingContextHolder.applicationContext
         val cfg = LensingContextHolder.config
         if (ctx != null && cfg != null) {
             val routing = AcquirerRegistry.resolve(cfg, session?.attemptCode)
             mainScope.launch {
+                // 不论启动与否都先发停止 deeplink（乐观、便宜；若 acquirer 其实刚起也能收到停止），差别只在要不要等。
                 val r = LocalAcquirerLauncher.launchVoid(ctx, cfg, routing, voidReq.orderId, voidReq.attemptId, voidReq.reason)
-                if (r.success) {
+                if (r.success && acquirerLaunched) {
+                    // 确有 acquirer 在跑：留满窗口等它回真实最终态（真 CANCEL 先到则去重胜出），到点仍静默才兜底合成。
                     Log.i(TAG, "Void: launched acquirer stop (${r.method}) for order ${voidReq.orderId}; awaiting real outcome")
                     delay(VOID_ACK_FALLBACK_MS)
                     acknowledgeInitiatorVoid(voidReq, session) // 兜底：收单端静默才合成；真实结果已到则去重忽略
                 } else {
-                    Log.w(TAG, "Void: could not launch local acquirer stop for order ${voidReq.orderId} (acquirer ${routing.code}); synthesizing cancel")
-                    acknowledgeInitiatorVoid(voidReq, session) // 无本地收单端可停 → 只能立刻合成
+                    // 没启动过 acquirer（还在选择页）或停止启动失败：没人会回真结果 → 立刻合成 CANCELLED，不白等 8 秒。
+                    Log.i(TAG, "Void: no acquirer running for order ${voidReq.orderId} (launched=$acquirerLaunched, stop=${r.success}); synthesizing cancel now")
+                    acknowledgeInitiatorVoid(voidReq, session)
                 }
             }
         } else {
