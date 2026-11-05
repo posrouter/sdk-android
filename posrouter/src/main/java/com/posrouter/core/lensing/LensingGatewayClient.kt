@@ -27,8 +27,9 @@ internal object LensingGatewayClient {
 
             val statusCode = connection.responseCode
             if (statusCode != 200) {
-                val errorBody = connection.errorStream?.bufferedReader()?.readText() ?: "HTTP $statusCode"
-                throw LensingException("GATEWAY_ERROR", errorBody)
+                val errorBody = connection.errorStream?.bufferedReader()?.readText()?.takeIf { it.isNotBlank() }
+                    ?: "HTTP $statusCode"
+                throw gatewayException(statusCode, errorBody)
             }
 
             val body = connection.inputStream.bufferedReader().readText()

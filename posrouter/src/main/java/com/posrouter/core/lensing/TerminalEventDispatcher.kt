@@ -16,20 +16,30 @@ internal object TerminalEventDispatcher {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastDispatchedPublicState: LensingConnectionState? = null
 
-    fun dispatchLensingState(state: LensingState) {
+    fun dispatchLensingState(state: LensingState, failure: POSRouterError? = null) {
         val publicState = state.toLensingConnectionState()
-        if (publicState == lastDispatchedPublicState) return
+        if (publicState == lastDispatchedPublicState) {
+            if (failure != null) dispatchFault(failure)
+            return
+        }
         lastDispatchedPublicState = publicState
         when (state) {
             LensingState.CONNECTED -> PendingConnectRegistry.flush()
             LensingState.FAILED ->
                 PendingConnectRegistry.failAll(
-                    POSRouterError("CONNECT_FAILED", "Lensing engine connection failed")
+                    failure ?: POSRouterError("CONNECT_FAILED", "Lensing engine connection failed")
                 )
             else -> Unit
         }
         listener?.let { l ->
             mainHandler.post { l.onLensingStateChanged(publicState) }
+        }
+        if (failure != null) dispatchFault(failure)
+    }
+
+    fun dispatchFault(error: POSRouterError) {
+        listener?.let { l ->
+            mainHandler.post { l.onLensingFault(error) }
         }
     }
 

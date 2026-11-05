@@ -302,6 +302,8 @@ POSRouter.refreshLensingConnection(backgroundMs = SystemClock.elapsedRealtime())
 
 Only pay when `CONNECTED`.
 
+A wrong device clock is not a retryable connection error. `/init` returns `401` with `code: CLOCK_SKEW` when `X-PR-Timestamp` is more than 5 minutes behind or more than 1 minute ahead of the gateway. The SDK stops reconnecting, moves to `FAILED`, and calls `onLensingFault` with `POSRouterError.code == "CLOCK_SKEW"`. The message says how far ahead or behind the clock is. Show that refusal and send the user to system date settings. Do not sign again with a server-adjusted timestamp. After the clock is corrected, `refreshLensingConnection` tries `/init` again.
+
 ## 10. Routing (local vs remote terminal)
 
 By default (`AUTO`) the SDK pays the reachable terminal — a co-located acquirer app on the

@@ -7,6 +7,13 @@ package com.posrouter
 interface POSRouterTerminalListener {
     fun onLensingStateChanged(state: LensingConnectionState) {}
 
+    /**
+     * Sign-in failed for a reason that will not clear by retrying.
+     * [POSRouterError.code] `CLOCK_SKEW` means the device clock is outside the gateway window.
+     * Correct the system clock, then call [POSRouter.refreshLensingConnection].
+     */
+    fun onLensingFault(error: POSRouterError) {}
+
     /** Remote pay received on NATS and about to launch the local acquirer. */
     fun onRemotePaymentReceived(
         orderId: String,

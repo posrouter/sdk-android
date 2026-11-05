@@ -88,6 +88,7 @@ internal object LensingProtocolEngine {
                 )
             } catch (e: Exception) {
                 if (generation != startGeneration) return@launch
+                if (rejectClockSkew(e)) return@launch
                 Log.e(TAG, "Gateway discovery failed, scheduling retry", e)
                 setState(LensingState.RECONNECTING)
                 scheduleGatewayRetry(config, generation)
@@ -120,6 +121,7 @@ internal object LensingProtocolEngine {
                 )
             } catch (e: Exception) {
                 if (generation != startGeneration) return@launch
+                if (rejectClockSkew(e)) return@launch
                 Log.e(TAG, "Gateway discovery retry failed", e)
                 setState(LensingState.RECONNECTING)
                 scheduleGatewayRetry(config, generation)
@@ -156,12 +158,30 @@ internal object LensingProtocolEngine {
         }
     }
 
-    private fun setState(newState: LensingState) {
-        if (state == newState) return
-        state = newState
-        TerminalEventDispatcher.dispatchLensingState(newState)
-        if (LensingContextHolder.config?.terminalMode == true) {
-            com.posrouter.terminal.TerminalNotificationRefresher.refresh()
+    private fun rejectClockSkew(e: Exception): Boolean {
+        if (e !is LensingException || e.code != CLOCK_SKEW) return false
+        Log.e(TAG, "Gateway rejected device clock", e)
+        setState(
+            LensingState.FAILED,
+            POSRouterError(
+                CLOCK_SKEW,
+                e.message ?: "Device clock is outside the allowed window"
+            )
+        )
+        return true
+    }
+
+    private fun setState(newState: LensingState, failure: POSRouterError? = null) {
+        val changed = state != newState
+        if (!changed && failure == null) return
+        if (changed) {
+            state = newState
+            TerminalEventDispatcher.dispatchLensingState(newState, failure)
+            if (LensingContextHolder.config?.terminalMode == true) {
+                com.posrouter.terminal.TerminalNotificationRefresher.refresh()
+            }
+        } else if (failure != null) {
+            TerminalEventDispatcher.dispatchFault(failure)
         }
     }
 
