@@ -280,10 +280,15 @@ internal object LensingProtocolEngine {
 
         val connection = natsConnection
         if (connection == null || state != LensingState.CONNECTED) {
-            fallbackQueue.add(QueuedMessage(targetSubject, payloadBytes, request, callback))
-            if (state == LensingState.IDLE || state == LensingState.FAILED) {
-                callback.onError(POSRouterError("NOT_INITIALIZED", "Lensing engine not connected"))
-            }
+            // Fail now instead of queueing (1.6.17): a pay replayed after the initiator already gave up
+            // would reach the terminal with nobody waiting — a charge with no order. A void cannot be
+            // queued behind it (publishVoid needs a live connection), so the pay must not be queued either.
+            callback.onError(
+                POSRouterError(
+                    if (state == LensingState.IDLE || state == LensingState.FAILED) "NOT_INITIALIZED" else "NOT_CONNECTED",
+                    "POSRouter network not connected"
+                )
+            )
             return
         }
 
@@ -295,8 +300,8 @@ internal object LensingProtocolEngine {
             connection.publish(targetSubject, payloadBytes)
             Log.i(TAG, "Pay dispatched on NATS for order ${request.orderId} attempt ${request.attemptId}")
         } catch (e: Exception) {
+            // Reported as failed → must not be re-sent later behind the caller's back (see above).
             PaymentAttemptRegistry.close(request.terminalId, request.orderId, request.attemptId)
-            fallbackQueue.add(QueuedMessage(targetSubject, payloadBytes, request, callback))
             callback.onError(POSRouterError("PUBLISH_FAILED", e.message ?: "Failed to publish"))
         }
     }
