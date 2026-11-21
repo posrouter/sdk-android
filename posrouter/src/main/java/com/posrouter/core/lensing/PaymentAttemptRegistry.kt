@@ -48,6 +48,12 @@ internal object PaymentAttemptRegistry {
         return attempts[storageKey]?.callback != null
     }
 
+    /** The initiator's waiting callback for this attempt, if this device started it. */
+    fun callbackFor(terminalId: String, orderId: String, attemptId: String): POSRouterCallback? {
+        pruneExpired()
+        return attempts[PaymentAttemptKey(terminalId, orderId, attemptId).storageKey()]?.callback
+    }
+
     fun hasInitiatorCallback(wire: WirePaymentRequest): Boolean =
         hasInitiatorCallback(wire.terminalId, wire.orderId, wire.attemptId)
 

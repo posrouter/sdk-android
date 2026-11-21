@@ -558,7 +558,16 @@ internal object LensingProtocolEngine {
         subDispatcher.subscribe(LensingSubjects.resultSubject(scope)) { msg ->
             handleIncomingResult(String(msg.data, Charsets.UTF_8))
         }
-        Log.i(TAG, "Subscribed result subject for initiator scope $key")
+        // Initiator also listens for the terminal's "claimed" so it can tell an online terminal (claims
+        // within ~1s of receiving the pay) from an offline one (core NATS: never delivered, never claimed).
+        subDispatcher.subscribe(LensingSubjects.claimedSubject(scope)) { msg ->
+            PaymentClaim.fromJson(String(msg.data, Charsets.UTF_8))?.let { claim ->
+                PaymentClaimRegistry.markClaimed(claim)
+                PaymentAttemptRegistry.callbackFor(claim.terminalId, claim.orderId, claim.attemptId)
+                    ?.onClaimed(claim.orderId, claim.attemptId)
+            }
+        }
+        Log.i(TAG, "Subscribed result + claimed subjects for initiator scope $key")
     }
 
     private fun resultScopeKey(scope: LensingSubjectScope): String =
