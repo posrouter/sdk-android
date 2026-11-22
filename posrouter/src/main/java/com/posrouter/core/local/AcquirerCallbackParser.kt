@@ -73,6 +73,15 @@ internal object AcquirerCallbackParser {
             // A QR / wallet sale carries no card_* fields; its payment method is the acquirer `channel`
             // (WeChat / Alipay). Without this the wallet sale reached the CRM with no method at all.
             putAll(parseEzyposWallet(orderJson))
+            // The result handed back belongs to an EARLIER attempt of the same order (ezypay: the gateway refused this
+            // attempt because another one is paid / in progress, or this order id already had a result). This request
+            // charged nothing; siblingOrderId names the attempt whose result it is, so the initiator books / checks that one.
+            uri.getQueryParameter("previous_attempt")?.trim()
+                ?.takeIf { it.equals("true", ignoreCase = true) }
+                ?.let { put("previousAttempt", "true") }
+            uri.getQueryParameter("sibling_order_id")?.trim()
+                ?.takeIf { it.isNotEmpty() && it.length <= MAX_CARD_FIELD_LENGTH }
+                ?.let { put("siblingOrderId", it) }
             // A SUCCESS whose acquirer order object carried no charged total is recorded at the only
             // figure left — the amount we REQUESTED (session.amount). For a cross-border wallet / QR
             // sale the customer pays in the pricing currency after FX, so the requested figure can be
@@ -406,6 +415,8 @@ internal object AcquirerCallbackParser {
         // EMV kernel result forwarded by the acquirer on failure/cancel (no order JSON to carry it),
         // so a recognition failure still leaves its reason in metadata → CRM.
         "emvResultCode", "emvResultDesc",
+        // Earlier-attempt result relayed by the kiosk (see the ezypos order-JSON shape above).
+        "previousAttempt", "siblingOrderId",
         // The Skyzer customer receipt (see KioskDeeplinks.FORWARDED_RESULT_METADATA_KEYS): lets the
         // initiator read the rail off the slip and print it. A whole receipt, not a card field, so it
         // is capped under FORWARDED_LONG_KEYS below rather than the 64-char card cap.
