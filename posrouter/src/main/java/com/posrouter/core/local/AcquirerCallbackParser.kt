@@ -359,12 +359,9 @@ internal object AcquirerCallbackParser {
         ) {
             return PaymentStatus.CANCELLED
         }
-        val mapped = mapStatus(statusRaw)
-        if (mapped == PaymentStatus.CANCELLED) return PaymentStatus.CANCELLED
-        if (mapped != PaymentStatus.APPROVED && messageIndicatesUserCancel(message)) {
-            return PaymentStatus.CANCELLED
-        }
-        return mapped
+        // The acquirer's status is relayed as it said it: a FAIL whose message happens to contain "cancel" stays a
+        // decline (posrouter relays, it does not reinterpret — Arik 2026-11-22).
+        return mapStatus(statusRaw)
     }
 
     internal fun messageIndicatesUserCancel(message: String?): Boolean {
