@@ -17,6 +17,13 @@ internal object PaymentResultLedger {
         return "${result.terminalId}:$orderId:$attemptId"
     }
 
+    /** True when an outcome has already been delivered for this terminal/order/attempt. */
+    fun isDelivered(terminalId: String, orderId: String, attemptId: String?): Boolean {
+        pruneExpired()
+        val key = "$terminalId:$orderId:${attemptId ?: PaymentAttemptKey.defaultAttemptId(orderId)}"
+        return delivered.containsKey(key)
+    }
+
     fun markIfFirst(result: PaymentResult): Boolean {
         pruneExpired()
         val key = deliveryKey(result) ?: return false

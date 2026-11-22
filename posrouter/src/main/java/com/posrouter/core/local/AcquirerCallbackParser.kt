@@ -54,6 +54,9 @@ internal object AcquirerCallbackParser {
         val authoritativeTotal = orderAmounts?.totalCents?.takeIf { it > 0 }
         val status = resolvePayStatus(statusRaw, cancelReasonRaw, message)
         val metadata = buildMap {
+            // The acquirer's own status word, always carried, so a status our enum has no name for (NOT_FOUND,
+            // REFUND, CLOSED…) still reaches the initiator verbatim instead of only as ERROR.
+            statusRaw.trim().takeIf { it.isNotEmpty() }?.let { put("acquirerStatus", it) }
             cancelReasonRaw?.trim()?.takeIf { it.isNotEmpty() }?.let { put("cancelReason", it) }
             orderAmounts?.surchargeCents?.let { put("surcharge", it.toString()) }
             // The acquirer's own net settlement for this sale (charged total minus its transaction fee,

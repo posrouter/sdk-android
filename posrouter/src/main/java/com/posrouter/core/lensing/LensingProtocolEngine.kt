@@ -642,14 +642,19 @@ internal object LensingProtocolEngine {
             mainScope.launch {
                 // 不论启动与否都先发停止 deeplink（乐观、便宜；若 acquirer 其实刚起也能收到停止），差别只在要不要等。
                 val r = LocalAcquirerLauncher.launchVoid(ctx, cfg, routing, voidReq.orderId, voidReq.attemptId, voidReq.reason)
-                if (r.success && acquirerLaunched) {
-                    // 确有 acquirer 在跑：留满窗口等它回真实最终态（真 CANCEL 先到则去重胜出），到点仍静默才兜底合成。
-                    Log.i(TAG, "Void: launched acquirer stop (${r.method}) for order ${voidReq.orderId}; awaiting real outcome")
+                if (acquirerLaunched) {
+                    // 确有 acquirer 在跑：只认它回的真实最终态。窗口到了仍静默（或停止 deeplink 都没发出去），不合成
+                    // CANCELLED——那会抢占去重账本、把随后真到的 APPROVED 挡掉；交给宿主去问收单端/网关，原样回传。
+                    Log.i(TAG, "Void: acquirer stop (${r.method}, sent=${r.success}) for order ${voidReq.orderId}; awaiting real outcome")
                     delay(VOID_ACK_FALLBACK_MS)
-                    acknowledgeInitiatorVoid(voidReq, session) // 兜底：收单端静默才合成；真实结果已到则去重忽略
+                    if (!PaymentResultLedger.isDelivered(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)) {
+                        val handler = com.posrouter.POSRouter.unresolvedAcquirerOrderHandler
+                        Log.w(TAG, "Void: acquirer silent for order ${voidReq.orderId} — ${if (handler != null) "asking host to resolve" else "no resolver; left without an outcome"}")
+                        handler?.invoke(voidReq.orderId)
+                    }
                 } else {
                     // 没启动过 acquirer（还在选择页）或停止启动失败：没人会回真结果 → 立刻合成 CANCELLED，不白等 8 秒。
-                    Log.i(TAG, "Void: no acquirer running for order ${voidReq.orderId} (launched=$acquirerLaunched, stop=${r.success}); synthesizing cancel now")
+                    Log.i(TAG, "Void: no acquirer running for order ${voidReq.orderId} — cancel happened on the kiosk picker, acknowledging it")
                     acknowledgeInitiatorVoid(voidReq, session)
                 }
             }

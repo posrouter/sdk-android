@@ -38,6 +38,16 @@ import com.posrouter.terminal.TerminalUiForegroundTracker
 
 object POSRouter {
 
+    /**
+     * Set by the terminal app. Called with an order id when an acquirer was handed the order and never reported an
+     * outcome the SDK could relay (e.g. an initiator void the acquirer stayed silent on). The host finds out what
+     * really happened (acquirer query / gateway) and feeds the answer back through [deliverAcquirerCallback]. The
+     * SDK never invents that outcome itself; with no handler set, the order is simply left without one.
+     */
+    @JvmStatic
+    @Volatile
+    var unresolvedAcquirerOrderHandler: ((orderId: String) -> Unit)? = null
+
     fun initialize(context: Context, config: POSRouterConfig) {
         LensingContextHolder.applicationContext = context.applicationContext
         LensingContextHolder.config = config
@@ -387,27 +397,19 @@ object POSRouter {
         if (attemptId != null &&
             VoidedAttemptRegistry.isVoided(config.terminalId, orderId, attemptId)
         ) {
-            if (result.status != PaymentStatus.APPROVED) {
-                android.util.Log.i(
+            if (result.status == PaymentStatus.APPROVED) {
+                // 竞态：void 后收单端仍授权成功（卡在停卡前一瞬已刷过）——绝不能丢弃，如实上报让系统可对账/退款。
+                android.util.Log.w(
                     "POSRouter",
-                    "Ignoring non-approved acquirer callback for voided attempt order=$orderId attempt=$attemptId status=${result.status}"
+                    "Void race: acquirer APPROVED after void order=$orderId attempt=$attemptId — surfacing (money moved, not dropping)"
                 )
-                return null
+                result = result.copy(metadata = result.metadata + ("voidRace" to "approved_after_void"))
+            } else if (result.status == PaymentStatus.CANCELLED && !result.metadata.containsKey("cancelReason")) {
+                // The acquirer's cancel answering our own void request: that is what caused it.
+                result = result.copy(metadata = result.metadata + ("cancelReason" to PaymentCancelReason.INITIATOR_VOID))
             }
-            // 竞态：void 后收单端仍授权成功（卡在停卡前一瞬已刷过）——绝不能丢弃，如实上报让系统可对账/退款。
-            android.util.Log.w(
-                "POSRouter",
-                "Void race: acquirer APPROVED after void order=$orderId attempt=$attemptId — surfacing (money moved, not dropping)"
-            )
-            result = result.copy(metadata = result.metadata + ("voidRace" to "approved_after_void"))
-        }
-
-        if (result.status == PaymentStatus.CANCELLED &&
-            !result.metadata.containsKey("cancelReason")
-        ) {
-            result = result.copy(
-                metadata = result.metadata + ("cancelReason" to PaymentCancelReason.USER_CANCEL)
-            )
+            // Any other acquirer answer for a voided attempt is the void's real outcome and is relayed (the SDK
+            // no longer pre-empts it with a synthesised cancel); the ledger drops it if one was already delivered.
         }
 
         val hadPayCallback = session != null &&
