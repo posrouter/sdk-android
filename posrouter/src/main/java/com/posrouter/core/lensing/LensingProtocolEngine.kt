@@ -408,6 +408,18 @@ internal object LensingProtocolEngine {
         Log.i(TAG, "Void ack published for order ${voidReq.orderId} attempt ${voidReq.attemptId}")
     }
 
+    /**
+     * A claim from another device on this terminal lane. When this device also initiated the pay (same
+     * MID/TID as its terminal), [ensureSubscriptionsForWire] skips the initiator's claimed subscription
+     * because the scope is already subscribed by the terminal role, so the claim must reach the
+     * initiator's callback from here.
+     */
+    internal fun handleRemoteClaim(claim: PaymentClaim) {
+        PaymentClaimRegistry.markClaimed(claim)
+        PaymentAttemptRegistry.callbackFor(claim.terminalId, claim.orderId, claim.attemptId)
+            ?.onClaimed(claim.orderId, claim.attemptId)
+    }
+
     private fun setupTerminalSubscriptions(subjectScope: LensingSubjectScope) {
         val connection = natsConnection ?: return
         val subDispatcher = dispatcher ?: connection.createDispatcher { }.also { dispatcher = it }
@@ -420,7 +432,7 @@ internal object LensingProtocolEngine {
                     Log.d(TAG, "Ignored own claimed echo for order ${claim.orderId}")
                     return@let
                 }
-                PaymentClaimRegistry.markClaimed(claim)
+                handleRemoteClaim(claim)
                 Log.i(TAG, "Payment UI claimed by remote for order ${claim.orderId} attempt ${claim.attemptId}")
             }
         }
