@@ -48,6 +48,15 @@ object POSRouter {
     @Volatile
     var unresolvedAcquirerOrderHandler: ((orderId: String) -> Unit)? = null
 
+    /**
+     * Set by the terminal app: true when it holds a durable record that an acquirer was handed [orderId]. Consulted
+     * on an initiator void when the in-memory launch marker is gone (process death), so the void is not answered
+     * with a synthesised CANCEL while the acquirer may be charging (Fable R2-B3).
+     */
+    @JvmStatic
+    @Volatile
+    var hostAcquirerHoldsOrder: ((orderId: String) -> Boolean)? = null
+
     /** True if the initiator voided any attempt of [orderId] on this terminal (recent). */
     @JvmStatic
     fun isOrderVoided(orderId: String): Boolean {

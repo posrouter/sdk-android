@@ -32,12 +32,15 @@ internal object PaymentResultLedger {
         pruneExpired()
         val key = deliveryKey(result) ?: return false
         val entry = Entry(result.status, System.currentTimeMillis())
-        val prev = delivered.putIfAbsent(key, entry) ?: return true
-        if (result.status == PaymentStatus.APPROVED && prev.status != PaymentStatus.APPROVED) {
-            delivered[key] = entry
-            return true
+        var admitted = false
+        delivered.compute(key) { _, prev ->
+            when {
+                prev == null -> { admitted = true; entry }
+                result.status == PaymentStatus.APPROVED && prev.status != PaymentStatus.APPROVED -> { admitted = true; entry }
+                else -> prev
+            }
         }
-        return false
+        return admitted
     }
 
     /** Status already delivered for this attempt, if any. */

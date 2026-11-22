@@ -633,7 +633,8 @@ internal object LensingProtocolEngine {
         // 作为结果；给 VOID_ACK_FALLBACK_MS 时间，到点仍无结果才合成 CANCELLED（结果去重保证真实结果先到就胜出）。
         // 这笔单本终端是否真启动过 acquirer（card/QR 经 launchPendingLocalPay，Skyzer 经 markLocalAcquirerLaunched）。
         // 没启动=还停在选择页：没有任何收单端会回真实最终态，等那 8 秒纯属白等（「选择页取消很慢」的根因）。
-        val acquirerLaunched = LocalAcquirerLaunchRegistry.isLaunched(voidReq.terminalId, voidReq.orderId)
+        val acquirerLaunched = LocalAcquirerLaunchRegistry.isLaunched(voidReq.terminalId, voidReq.orderId) ||
+            (runCatching { com.posrouter.POSRouter.hostAcquirerHoldsOrder?.invoke(voidReq.orderId) }.getOrNull() == true)
         LocalAcquirerLaunchRegistry.clear(voidReq.terminalId, voidReq.orderId)
         val ctx = LensingContextHolder.applicationContext
         val cfg = LensingContextHolder.config
