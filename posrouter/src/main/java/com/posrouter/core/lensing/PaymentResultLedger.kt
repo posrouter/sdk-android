@@ -24,11 +24,26 @@ internal object PaymentResultLedger {
         return delivered.containsKey(key)
     }
 
+    /**
+     * First outcome per attempt wins — except that an APPROVED always gets through over an earlier non-APPROVED
+     * (money moved; a late approval after a relayed not-found/decline must reach the initiator and the CRM, Fable B-C1).
+     */
     fun markIfFirst(result: PaymentResult): Boolean {
         pruneExpired()
         val key = deliveryKey(result) ?: return false
         val entry = Entry(result.status, System.currentTimeMillis())
-        return delivered.putIfAbsent(key, entry) == null
+        val prev = delivered.putIfAbsent(key, entry) ?: return true
+        if (result.status == PaymentStatus.APPROVED && prev.status != PaymentStatus.APPROVED) {
+            delivered[key] = entry
+            return true
+        }
+        return false
+    }
+
+    /** Status already delivered for this attempt, if any. */
+    fun deliveredStatus(result: PaymentResult): PaymentStatus? {
+        pruneExpired()
+        return deliveryKey(result)?.let { delivered[it]?.status }
     }
 
     private fun pruneExpired() {

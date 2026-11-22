@@ -5,6 +5,7 @@ internal object VoidedAttemptRegistry {
     private const val TTL_MS = 30 * 60 * 1000L
 
     private val voidedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val voidedOrderAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private fun key(terminalId: String, orderId: String, attemptId: String): String =
         PaymentAttemptKey(terminalId, orderId, attemptId).storageKey()
@@ -12,6 +13,13 @@ internal object VoidedAttemptRegistry {
     fun mark(terminalId: String, orderId: String, attemptId: String) {
         pruneExpired()
         voidedAt[key(terminalId, orderId, attemptId)] = System.currentTimeMillis()
+        voidedOrderAt["$terminalId:${orderId.lowercase()}"] = System.currentTimeMillis()
+    }
+
+    /** Any attempt of [orderId] on [terminalId] voided by the initiator (within the TTL). */
+    fun isOrderVoided(terminalId: String, orderId: String): Boolean {
+        pruneExpired()
+        return voidedOrderAt.containsKey("$terminalId:${orderId.lowercase()}")
     }
 
     fun isVoided(terminalId: String, orderId: String, attemptId: String): Boolean {
@@ -22,5 +30,6 @@ internal object VoidedAttemptRegistry {
     private fun pruneExpired() {
         val now = System.currentTimeMillis()
         voidedAt.entries.removeIf { (_, recordedAt) -> now - recordedAt > TTL_MS }
+        voidedOrderAt.entries.removeIf { (_, recordedAt) -> now - recordedAt > TTL_MS }
     }
 }

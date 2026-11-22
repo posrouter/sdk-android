@@ -48,6 +48,13 @@ object POSRouter {
     @Volatile
     var unresolvedAcquirerOrderHandler: ((orderId: String) -> Unit)? = null
 
+    /** True if the initiator voided any attempt of [orderId] on this terminal (recent). */
+    @JvmStatic
+    fun isOrderVoided(orderId: String): Boolean {
+        val terminalId = LensingContextHolder.config?.terminalId ?: return false
+        return com.posrouter.core.lensing.VoidedAttemptRegistry.isOrderVoided(terminalId, orderId)
+    }
+
     fun initialize(context: Context, config: POSRouterConfig) {
         LensingContextHolder.applicationContext = context.applicationContext
         LensingContextHolder.config = config

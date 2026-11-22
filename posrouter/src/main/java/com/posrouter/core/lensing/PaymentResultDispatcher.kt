@@ -24,11 +24,27 @@ internal object PaymentResultDispatcher {
         publishNats: Boolean = source != PaymentResultSource.NATS_INBOUND,
         dispatchTerminal: Boolean = true
     ): Boolean {
+        val earlier = PaymentResultLedger.deliveredStatus(result)
         if (!PaymentResultLedger.markIfFirst(result)) {
             Log.d(TAG, "Duplicate result ignored order=${result.orderId} attempt=${result.attemptId}")
             return false
         }
 
+        if (earlier != null && earlier != result.status) {
+            Log.w(TAG, "Result supersedes earlier $earlier order=${result.orderId} attempt=${result.attemptId} status=${result.status}")
+            @Suppress("NAME_SHADOWING")
+            val result = result.copy(metadata = result.metadata + ("supersedes" to earlier.name))
+            return deliverMarked(result, source, publishNats, dispatchTerminal)
+        }
+        return deliverMarked(result, source, publishNats, dispatchTerminal)
+    }
+
+    private fun deliverMarked(
+        result: PaymentResult,
+        source: PaymentResultSource,
+        publishNats: Boolean,
+        dispatchTerminal: Boolean
+    ): Boolean {
         val orderId = result.orderId
         val attemptId = result.attemptId
 

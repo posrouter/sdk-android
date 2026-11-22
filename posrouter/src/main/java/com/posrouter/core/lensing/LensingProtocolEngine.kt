@@ -648,6 +648,9 @@ internal object LensingProtocolEngine {
                     Log.i(TAG, "Void: acquirer stop (${r.method}, sent=${r.success}) for order ${voidReq.orderId}; awaiting real outcome")
                     delay(VOID_ACK_FALLBACK_MS)
                     if (!PaymentResultLedger.isDelivered(voidReq.terminalId, voidReq.orderId, voidReq.attemptId)) {
+                        // The void itself is a fact (posrouter received it) — tell the terminal app so it can leave the
+                        // order (Fable B-H1); the payment outcome is NOT invented: the host asks the acquirer.
+                        TerminalEventDispatcher.dispatchRemotePaymentVoided(voidReq.orderId, voidReq.attemptId, "Voided by initiator")
                         val handler = com.posrouter.POSRouter.unresolvedAcquirerOrderHandler
                         Log.w(TAG, "Void: acquirer silent for order ${voidReq.orderId} — ${if (handler != null) "asking host to resolve" else "no resolver; left without an outcome"}")
                         handler?.invoke(voidReq.orderId)
