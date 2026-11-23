@@ -19,7 +19,7 @@ dependencyResolutionManagement {
 In your app module `build.gradle.kts`:
 
 ```kotlin
-implementation("com.github.posrouter.sdk-android:posrouter:1.6.5")
+implementation("com.github.posrouter:sdk-android:1.6.20")
 ```
 
 No account or token required — the repo is public and JitPack builds it on first request.

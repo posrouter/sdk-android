@@ -39,14 +39,17 @@ When the spec moves to **V1.7**, the next SDK line starts at **1.7.0** (even if 
 | **1.6.4** | Local POSRouter Kiosk connect handshake + package-visibility `<queries>`; cancel/result relay hardening for partners |
 | **1.6.5** | Patch line for partner TMS / AAR republish |
 | **1.6.16** | `/init` clock skew stops reconnect and is reported as `CLOCK_SKEW` |
+| **1.6.17** | `onClaimed(orderId, attemptId)`: the initiator learns that a remote terminal picked up its pay |
+| **1.6.18** | Relay-only results: no synthesised void cancel / `cancelReason`; a pay is never queued for replay (`NOT_CONNECTED` / `PUBLISH_FAILED` fail at once); a late `APPROVED` supersedes an earlier non-approval |
+| **1.6.20** | `onClaimed` also when initiator and terminal share a lane; acquirer callback `previous_attempt` / `sibling_order_id` → `metadata.previousAttempt` / `siblingOrderId` |
 
-Partners on **≤ 1.0.2** should treat **1.6.3+** as the upgrade target (see [MIGRATION.md](MIGRATION.md)); current publish line is **1.6.16**. The interim label `1.0.3` was never published.
+Partners on **≤ 1.0.2** should treat **1.6.3+** as the upgrade target (see [MIGRATION.md](MIGRATION.md)); current publish line is **1.6.20**. The interim label `1.0.3` was never published.
 
 ## Where the version is set
 
 ```properties
 # sdk-android/gradle.properties
-POSROUTER_VERSION=1.6.16
+POSROUTER_VERSION=1.6.20
 ```
 
 Publish:
@@ -58,7 +61,7 @@ Publish:
 Partners:
 
 ```kotlin
-implementation("com.posrouter:posrouter:1.6.16")
+implementation("com.posrouter:posrouter:1.6.20")
 ```
 
 ## Spec reference in code

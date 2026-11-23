@@ -56,7 +56,7 @@ Add the dependency (pin the exact version we give you):
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.posrouter:sdk-android:1.6.14")
+    implementation("com.github.posrouter:sdk-android:1.6.20")
 }
 ```
 
@@ -144,9 +144,22 @@ POSRouter.pay(
         override fun onError(error: POSRouterError) {
             Log.e(TAG, "${error.code} ${error.message}")   // could not send — see §13
         }
+        override fun onClaimed(orderId: String, attemptId: String) {
+            // optional (1.6.17+): the remote terminal picked up this pay and is showing the payment UI
+        }
     }
 )
 ```
+
+**`onClaimed` (optional, 1.6.17+)** fires when the remote terminal picks up the pay. It is how
+you tell "the terminal is working on it" apart from "nobody received it": an offline terminal
+never receives the pay, so no claim within a few seconds means it was not delivered. Do **not**
+auto-void on a missing claim — show it to the cashier and let them decide (§7).
+
+**Retrying the same sale:** every card try needs its own `orderId`. Use your base order id for
+the first try and suffix later tries (`ORDER-9-2`, `ORDER-9-3`, …). The acquirer gateway treats
+the base id and its `-N` tries as one sale and charges it **at most once** — see §12
+(`previousAttempt` / `siblingOrderId`).
 
 ### Amount helper
 
@@ -192,15 +205,24 @@ lane), and `attemptCode` (override the acquirer pipeline for this one try, e.g. 
 
 ## 7. Void an in-flight payment
 
-Soft-void a payment you just started (before it settles). Resolves as a `CANCELLED` result
-on your pay callback (with `cancelReason = initiator_void`) when the terminal acks.
+Ask the terminal to stop a payment you just started (before it settles).
 
 ```kotlin
 POSRouter.voidPayment(orderId = "ORDER-9")   // returns false if no such in-flight pay
 ```
 
-`voidPayment` is a **remote** soft-void: it publishes to the terminal and keeps your pay
-callback open until the terminal acks with the `CANCELLED` result.
+`voidPayment` is a **request**, not a verdict. It publishes to the terminal, which stops the
+card reader if the card has not been read yet, and keeps your pay callback open. What arrives on
+the callback is **whatever the acquirer actually reports** (1.6.18+ — the SDK never synthesises a
+cancel):
+
+- card not yet read → `CANCELLED` with `cancelReason = initiator_void` (`onInitiatorVoided` fires too);
+- card already authorised → **`APPROVED`** — the money was taken; book the sale;
+- result unknown on the terminal → no callback yet; confirm with `queryStatus` (§8.1) or your
+  backend before charging again.
+
+A late `APPROVED` always supersedes an earlier non-approval for the same attempt. Never treat
+"I sent a void" as "nothing was charged".
 
 ### 7.1 Abandon a pending payment locally
 
@@ -377,6 +399,21 @@ the acquirer reports them — `surcharge` and `tip` (minor units, as strings) pl
 `cardScheme`, `cardLast4`, `cardEntryMode`, `authCode` (and, if present, `cardAppLabel`,
 `cardAid`, `cardPanSeqNo`). All are optional; a key is present only when the terminal returns it.
 
+Outcome keys (1.6.18+), relayed as the acquirer gives them:
+
+| Key | Meaning / what to do |
+|---|---|
+| `acquirerStatus` | The acquirer's own status word, e.g. `ORDER_ALREADY_PAID`, `ORDER_IN_PROGRESS`, `ORDER_CLOSED`, `EFTPOS`. |
+| `previousAttempt` = `"true"` | **This try charged nothing**; the result belongs to an earlier try of the same sale. |
+| `siblingOrderId` | The earlier try's `orderId` (base id or `-N`). If `status = APPROVED`, book the sale **against this id** (it is the reference to use for refunds). |
+| `paymentNotAttempted` = `"true"` | The acquirer app never started a charge for this try. |
+
+How to act on them:
+
+- `ORDER_ALREADY_PAID` with `status = APPROVED` + `previousAttempt` → the sale is paid by `siblingOrderId`; book it, do not charge again.
+- `ORDER_ALREADY_PAID` / `ORDER_IN_PROGRESS` without `APPROVED` → an earlier try is paid or still running but its result is not confirmed. **Do not charge again** (not by card, not in cash); confirm that try (`queryStatus` / your backend) first.
+- `ORDER_CLOSED` → the acquirer will no longer accept this sale (it was cancelled or moved to EFTPOS). Start a new order.
+
 ## 13. Error codes (`POSRouterError.code`)
 
 | Code | Meaning / action |
@@ -384,7 +421,8 @@ the acquirer reports them — `surcharge` and `tip` (minor units, as strings) pl
 | `NOT_INITIALIZED` | Call `initialize(context, config)` first, or the engine isn't connected yet. |
 | `ALREADY_CLAIMED` | A payment UI is already open for that order. |
 | `CONNECTING` | Refund queued until the connection is back; it will retry. |
-| `PUBLISH_FAILED` | Could not send to the terminal (transient) — retry when `CONNECTED`. |
+| `NOT_CONNECTED` | The lane is not connected; the pay was **not** sent and will **not** be sent later (1.6.18+ never queues a pay for replay). Retry when `CONNECTED`. |
+| `PUBLISH_FAILED` | Could not send to the terminal (transient) — the pay was not sent; retry when `CONNECTED`. |
 | `GATEWAY_ERROR` | Gateway handshake failed — usually a wrong/whitespace key or wrong `gatewayBaseUrl`. |
 | `LOCAL_ACQUIRER_UNAVAILABLE` / `LOCAL_KIOSK_UNAVAILABLE` | Local-track only: the acquirer app isn't installed. |
 | `CONNECT_FAILED` | The lane could not be established. |
@@ -398,6 +436,10 @@ Blank `orderId` or a non-positive `amount` are rejected before send — validate
 - **Amounts are always integer cents.** Use `amountFromDecimal` to convert strings safely.
 - **`orderId` must be unique per payment and non-blank.** It's how results are matched back
   to your request.
+- **One sale is charged at most once.** Retry with a new `-N` order id (§6); the gateway refuses a
+  try whose sale is already paid or still in progress and hands back the earlier try's result.
+- **"Unknown" is not "unpaid".** If you did not get a final result (timeout, app killed, void sent),
+  ask before re-charging: `queryStatus` (§8.1) or your backend's order-status check.
 - **Confirm outcomes server-side too.** The live result is delivered over a network stream;
   for anything that must never be missed (e.g. reconciliation), also confirm the final
   status through your own backend / an order-status check — a result emitted during a brief
